@@ -3,7 +3,9 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme, livePreview } from "./editorTheme";
 
 interface Props {
@@ -24,34 +26,79 @@ export function GhostEditor({ parentId }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | undefined>(undefined);
   const handedOff = useRef(false);
+  const composing = useRef(false);
   const createChild = useNotebookStore((state) => state.createChild);
+
+  const shouldFocus = useNotebookStore((state) => state.activeGhostParentId === parentId);
 
   useEffect(() => {
     if (!host.current) return;
     handedOff.current = false;
+    composing.current = false;
+
+    const materialize = () => {
+      const current = view.current;
+      if (!current || handedOff.current || composing.current || current.composing) return;
+      const text = current.state.doc.toString();
+      if (!text) return;
+      handedOff.current = true;
+      const caret = current.state.selection.main.head;
+      const newNodeId = createChild(parentId, text);
+      current.dispatch({ changes: { from: 0, to: current.state.doc.length, insert: "" } });
+      handedOff.current = false;
+      if (newNodeId) focusRealEditor(newNodeId, caret);
+    };
+
     const state = EditorState.create({
       doc: "",
       extensions: [
         markdown(),
         livePreview,
-        keymap.of([...defaultKeymap, indentWithTab]),
+        EditorView.lineWrapping,
+        keymap.of([
+          {
+            key: "Backspace",
+            run: (editor) => {
+              if (!editor.state.selection.main.empty || editor.state.selection.main.head !== 0) return false;
+              const notebook = useNotebookStore.getState();
+              const siblings = childrenOf(notebook, parentId).filter((node) => node.kind !== "date");
+              const previous = siblings[siblings.length - 1];
+              if (previous) {
+                notebook.focusNode(previous.id, "end");
+              } else if (notebook.nodes[parentId]?.kind === "content") {
+                notebook.focusNode(parentId, "end");
+              } else {
+                const row = host.current?.closest<HTMLElement>("[data-ghost-row='true']");
+                row?.classList.remove("is-shaking");
+                if (row) void row.offsetWidth;
+                row?.classList.add("is-shaking");
+                if (row) setTimeout(() => row.classList.remove("is-shaking"), 220);
+              }
+              return true;
+            },
+          },
+          ...crossNodeNavigationKeymap,
+          ...defaultKeymap,
+          indentWithTab,
+        ]),
         EditorView.updateListener.of((update) => {
           if (handedOff.current || !update.docChanged) return;
-          const text = update.state.doc.toString();
-          if (!text) return;
-          handedOff.current = true;
-          const caret = update.state.selection.main.head;
-          const newNodeId = createChild(parentId, text);
-          // Reset this ghost's own document immediately instead of waiting
-          // for the parent to re-render and unmount it. Otherwise there is
-          // a visible frame where both the ghost and the newly created real
-          // node show the same first character, and ghosts that persist
-          // regardless of sibling count (e.g. the trailing end-of-tree
-          // ghost) would otherwise be stuck showing stale text forever.
-          const current = view.current;
-          if (current) current.dispatch({ changes: { from: 0, to: current.state.doc.length, insert: "" } });
-          handedOff.current = false;
-          if (newNodeId) focusRealEditor(newNodeId, caret);
+          if (!composing.current && !update.view.composing) materialize();
+        }),
+        EditorView.domEventHandlers({
+          focus: () => {
+            useNotebookStore.getState().focusGhost(parentId);
+            return false;
+          },
+          compositionstart: () => {
+            composing.current = true;
+            return false;
+          },
+          compositionend: () => {
+            composing.current = false;
+            queueMicrotask(materialize);
+            return false;
+          },
         }),
         editorTheme,
       ],
@@ -59,6 +106,18 @@ export function GhostEditor({ parentId }: Props) {
     view.current = new EditorView({ state, parent: host.current });
     return () => { view.current?.destroy(); view.current = undefined; };
   }, [parentId, createChild]);
+
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    if (shouldFocus) {
+      queueMicrotask(() => {
+        if (view.current && !view.current.hasFocus) {
+          view.current.focus();
+        }
+      });
+    }
+  }, [shouldFocus]);
 
   return <div className="inline-editor ghost-editor" ref={host} aria-label="新建节点" />;
 }

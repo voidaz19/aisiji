@@ -41,6 +41,66 @@ describe("splitNode (Enter in the middle of content)", () => {
   });
 });
 
+describe("editing a content node as the active root", () => {
+  it("focuses the content editor when entering a content node", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+
+    store.enterNode(node.id);
+
+    const state = useNotebookStore.getState();
+    expect(state.activeRootId).toBe(node.id);
+    expect(state.activeNodeId).toBe(node.id);
+    expect(state.activeNodeCursor).toBe("end");
+  });
+
+  it("creates a child and keeps the active root when the root editor is split", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "root text");
+    store.enterNode(node.id);
+
+    const newId = store.splitNode(node.id, "root ", "text")!;
+
+    const state = useNotebookStore.getState();
+    expect(state.activeRootId).toBe(node.id);
+    expect(state.activeNodeId).toBe(newId);
+    expect(state.activeNodeCursor).toBe(0);
+    expect(state.nodes[node.id].markdown).toBe("root ");
+    expect(state.nodes[newId].markdown).toBe("text");
+    expect(state.nodes[newId].parentId).toBe(node.id);
+    expect(childrenOf(state, node.id).map((child) => child.id)).toEqual([newId]);
+  });
+
+  it("blocks Backspace from removing or migrating the active root", () => {
+    const store = useNotebookStore.getState();
+    const previous = firstContentNode();
+    store.editMarkdown(previous.id, "previous");
+    const rootId = store.createSibling(previous.id, "root")!;
+    store.enterNode(rootId);
+
+    store.mergeWithPrev(rootId);
+
+    const state = useNotebookStore.getState();
+    expect(state.activeRootId).toBe(rootId);
+    expect(state.nodes[rootId].deletedAt).toBeNull();
+    expect(state.nodes[previous.id].markdown).toBe("previous");
+  });
+
+  it("moves the active root to the adjacent node when explicitly deleted", () => {
+    const store = useNotebookStore.getState();
+    const previous = firstContentNode();
+    const rootId = store.createSibling(previous.id, "root")!;
+    store.enterNode(rootId);
+
+    store.remove(rootId);
+
+    const state = useNotebookStore.getState();
+    expect(state.activeRootId).toBe(previous.id);
+    expect(state.activeNodeId).toBe(previous.id);
+  });
+});
+
 describe("mergeWithPrev (Backspace at the start of content)", () => {
   it("merges content into the previous sibling and removes the current node", () => {
     const store = useNotebookStore.getState();
@@ -58,7 +118,37 @@ describe("mergeWithPrev (Backspace at the start of content)", () => {
     expect(state.activeNodeCursor).toBe("hello".length);
   });
 
-  it("reparents children of the removed node onto the merge target instead of deleting them", () => {
+  it("deletes an empty node and focuses the deepest visible node in the previous sibling subtree", () => {
+    const store = useNotebookStore.getState();
+    const previousSibling = firstContentNode();
+    store.editMarkdown(previousSibling.id, "previous");
+    const nestedId = store.createChild(previousSibling.id, "nested")!;
+    const emptyId = store.createSibling(previousSibling.id, "")!;
+
+    store.mergeWithPrev(emptyId);
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[emptyId].deletedAt).not.toBeNull();
+    expect(state.activeNodeId).toBe(nestedId);
+    expect(state.activeNodeCursor).toBe("nested".length);
+  });
+
+  it("focuses the previous sibling itself when its subtree is collapsed", () => {
+    const store = useNotebookStore.getState();
+    const previousSibling = firstContentNode();
+    store.editMarkdown(previousSibling.id, "previous");
+    store.createChild(previousSibling.id, "nested");
+    store.toggleNode(previousSibling.id);
+    const emptyId = store.createSibling(previousSibling.id, "")!;
+
+    store.mergeWithPrev(emptyId);
+
+    const state = useNotebookStore.getState();
+    expect(state.activeNodeId).toBe(previousSibling.id);
+    expect(state.activeNodeCursor).toBe("previous".length);
+  });
+
+  it("blocks merging and preserves node when the node has children", () => {
     const store = useNotebookStore.getState();
     const first = firstContentNode();
     const secondId = store.createSibling(first.id, "parent-to-merge")!;
@@ -67,11 +157,12 @@ describe("mergeWithPrev (Backspace at the start of content)", () => {
     store.mergeWithPrev(secondId);
 
     const state = useNotebookStore.getState();
+    expect(state.nodes[secondId].deletedAt).toBeNull();
     expect(state.nodes[childId].deletedAt).toBeNull();
-    expect(state.nodes[childId].parentId).toBe(first.id);
+    expect(state.nodes[childId].parentId).toBe(secondId);
   });
 
-  it("merges into the parent when the node is the first child (and parent is a regular content node)", () => {
+  it("merges into the parent when the node is the first child with no children (and parent is a regular content node)", () => {
     const store = useNotebookStore.getState();
     const first = firstContentNode();
     store.editMarkdown(first.id, "parent-text");
@@ -85,19 +176,63 @@ describe("mergeWithPrev (Backspace at the start of content)", () => {
     expect(state.activeNodeId).toBe(first.id);
   });
 
-  it("does not merge a first child into its date-node parent", () => {
+  it("deletes an empty only child without leaving a child ghost under its content parent", () => {
+    const store = useNotebookStore.getState();
+    const parent = firstContentNode();
+    const childId = store.createChild(parent.id, "")!;
+
+    store.mergeWithPrev(childId);
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[childId].deletedAt).not.toBeNull();
+    expect(state.ghostSuppressed[parent.id]).toBe(true);
+    expect(state.activeNodeId).toBe(parent.id);
+  });
+
+  it("allows a child ghost again after a new child is explicitly created", () => {
+    const store = useNotebookStore.getState();
+    const parent = firstContentNode();
+    const emptyChildId = store.createChild(parent.id, "")!;
+    store.mergeWithPrev(emptyChildId);
+
+    store.createChild(parent.id, "new child");
+
+    expect(useNotebookStore.getState().ghostSuppressed[parent.id]).toBe(false);
+  });
+
+  it("does not merge a first child into its date-node parent when it has content", () => {
     const store = useNotebookStore.getState();
     const first = firstContentNode();
+    store.editMarkdown(first.id, "some text");
     store.mergeWithPrev(first.id);
     const state = useNotebookStore.getState();
     expect(state.nodes[first.id].deletedAt).toBeNull();
   });
 
-  it("does nothing when there is no previous sibling and no mergeable parent", () => {
+  it("does nothing when target is a date node", () => {
     const store = useNotebookStore.getState();
     const date = Object.values(useNotebookStore.getState().nodes).find((node) => node.kind === "date")!;
     store.mergeWithPrev(date.id);
     const state = useNotebookStore.getState();
     expect(state.nodes[date.id].deletedAt).toBeNull();
+  });
+});
+
+describe("explicit row deletion", () => {
+  it("focuses the date ghost after deleting its only content child", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    const dateId = node.parentId!;
+    expect(store.nodes[dateId].kind).toBe("date");
+    store.openRoot(dateId);
+
+    for (const sibling of childrenOf(useNotebookStore.getState(), dateId)) {
+      if (sibling.id !== node.id) useNotebookStore.getState().remove(sibling.id);
+    }
+    useNotebookStore.getState().remove(node.id);
+
+    const state = useNotebookStore.getState();
+    expect(state.activeNodeId).toBeNull();
+    expect(state.activeGhostParentId).toBe(dateId);
   });
 });

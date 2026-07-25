@@ -51,7 +51,7 @@ function decorate(state: EditorState) {
 export const editorTheme = EditorView.theme({
   "&": { backgroundColor: "transparent", fontFamily: "inherit", fontSize: "14.5px", lineHeight: "1.6", outline: "none", border: "0" },
   "&.cm-focused": { outline: "none" },
-  ".cm-content": { padding: "9px 0", caretColor: "#4f46e5", fontFamily: "inherit", color: "#191919", lineHeight: "1.6" },
+  ".cm-content": { padding: "9px 0", caretColor: "#4f46e5", fontFamily: "inherit", color: "#191919", lineHeight: "1.6", wordBreak: "break-word", overflowWrap: "anywhere" },
   ".cm-scroller": { overflow: "visible", lineHeight: "1.6", fontFamily: "inherit" },
   ".cm-line": { padding: "0", fontFamily: "inherit" },
   ".cm-gutters": { display: "none" },

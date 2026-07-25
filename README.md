@@ -22,6 +22,8 @@ npm run dev -- --host localhost --port 4173
 
 浏览器预览地址：`http://localhost:4173/`
 
+项目按功能模块和平台适配器分层。新增功能或调整目录前，请先阅读 [项目架构](docs/ARCHITECTURE.md)。
+
 运行 Windows Tauri 开发版：
 
 ```powershell
@@ -37,6 +39,13 @@ cargo check --config 'source.crates-io.replace-with="rsproxy"' --config 'source.
 ## 测试与构建
 
 ```powershell
+npm run check
+```
+
+`npm run check` 会依次检查模块依赖边界、前端测试、TypeScript/生产构建、Rust 格式和 Rust 编译。也可以单独运行：
+
+```powershell
+npm run check:boundaries
 npm test
 npm run build
 cargo check --config 'source.crates-io.replace-with="rsproxy"' --config 'source.rsproxy.registry="sparse+https://rsproxy.cn/index/"'
@@ -69,4 +78,3 @@ npm run tauri android build
 ```
 
 坚果云凭据只应填写在应用设置中，使用 WebDAV 应用密码；不要提交到源码或 `.env` 文件。
-

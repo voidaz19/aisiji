@@ -55,6 +55,17 @@ export function hasChildren(state: NotebookState, nodeId: string): boolean {
   return childrenOf(state, nodeId).length > 0;
 }
 
+/** Returns the final node currently visible inside a node's expanded subtree. */
+export function lastVisibleNodeInSubtree(state: NotebookState, nodeId: string): NodeRecord | undefined {
+  let current = state.nodes[nodeId];
+  while (current && isNodeExpanded(state, current.id)) {
+    const children = childrenOf(state, current.id);
+    if (!children.length) break;
+    current = children[children.length - 1];
+  }
+  return current;
+}
+
 export function isDescendant(state: NotebookState, nodeId: string, possibleAncestor: string): boolean {
   let current = state.nodes[nodeId]?.parentId ?? null;
   while (current) {

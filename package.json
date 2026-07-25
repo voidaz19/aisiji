@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check": "npm run check:boundaries && npm test && npm run build && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo check --manifest-path src-tauri/Cargo.toml",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",

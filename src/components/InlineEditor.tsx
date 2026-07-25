@@ -1,14 +1,20 @@
 import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { defaultKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, redo } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { planMultilinePaste } from "./editorClipboard";
+import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme, livePreview } from "./editorTheme";
 
-interface Props { nodeId: string; value: string; }
+interface Props {
+  nodeId: string;
+  value: string;
+  variant?: "node" | "root";
+}
 
-export function InlineEditor({ nodeId, value }: Props) {
+export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | undefined>(undefined);
   const syncingValue = useRef(false);
@@ -20,6 +26,8 @@ export function InlineEditor({ nodeId, value }: Props) {
   const indent = useNotebookStore((state) => state.indent);
   const outdent = useNotebookStore((state) => state.outdent);
   const mergeWithPrev = useNotebookStore((state) => state.mergeWithPrev);
+  const mergeWithNext = useNotebookStore((state) => state.mergeWithNext);
+  const remove = useNotebookStore((state) => state.remove);
   const isActiveNode = useNotebookStore((state) => state.activeNodeId === nodeId);
   const activeNodeCursor = useNotebookStore((state) => state.activeNodeCursor);
 
@@ -29,19 +37,17 @@ export function InlineEditor({ nodeId, value }: Props) {
       doc: value,
       extensions: [
         markdown(),
+        history(),
         livePreview,
+        EditorView.lineWrapping,
         keymap.of([
           {
             key: "Enter",
             run: (editor) => {
               const doc = editor.state.doc.toString();
-              const pos = editor.state.selection.main.head;
-              const before = doc.slice(0, pos);
-              const after = doc.slice(pos);
-              // Splitting keeps text before the cursor on this node and moves
-              // text after the cursor into a new sibling, matching how outliners
-              // like Workflowy/Roam treat Enter as a content split rather than
-              // always inserting a blank line below.
+              const { from, to } = editor.state.selection.main;
+              const before = doc.slice(0, from);
+              const after = doc.slice(to);
               splitNode(nodeId, before, after);
               return true;
             },
@@ -63,12 +69,35 @@ export function InlineEditor({ nodeId, value }: Props) {
             run: (editor) => {
               const pos = editor.state.selection.main.head;
               const hasSelection = !editor.state.selection.main.empty;
-              // Only intercept Backspace at the very start of the node (no
-              // selection) so a normal in-text delete still behaves normally.
               if (pos === 0 && !hasSelection) { mergeWithPrev(nodeId); return true; }
               return false;
             },
           },
+          {
+            key: "Delete",
+            run: (editor) => {
+              const docLen = editor.state.doc.length;
+              const pos = editor.state.selection.main.head;
+              const hasSelection = !editor.state.selection.main.empty;
+              if (pos === docLen && !hasSelection) { mergeWithNext(nodeId); return true; }
+              return false;
+            },
+          },
+          {
+            key: "Mod-Shift-Backspace",
+            run: () => { remove(nodeId); return true; },
+          },
+          {
+            key: "Mod-Delete",
+            run: () => { remove(nodeId); return true; },
+          },
+          {
+            key: "Mod-Shift-z",
+            run: redo,
+            preventDefault: true,
+          },
+          ...crossNodeNavigationKeymap,
+          ...historyKeymap,
           ...defaultKeymap,
           indentWithTab,
         ]),
@@ -90,12 +119,28 @@ export function InlineEditor({ nodeId, value }: Props) {
           },
           paste: (event, editor) => {
             const text = event.clipboardData?.getData("text/plain") ?? "";
-            if (!text.includes("\n")) return false;
+            const selection = editor.state.selection.main;
+            const plan = planMultilinePaste(
+              editor.state.doc.toString(),
+              selection.from,
+              selection.to,
+              text,
+            );
+            if (!plan) return false;
             event.preventDefault();
-            const lines = text.replace(/\r\n/g, "\n").split("\n").filter(Boolean);
-            if (lines.length) {
-              editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: lines[0] } });
-              for (const line of lines.slice(1)) createSibling(nodeId, line.trim());
+            editor.dispatch({
+              changes: {
+                from: 0,
+                to: editor.state.doc.length,
+                insert: plan.currentMarkdown,
+              },
+            });
+            let insertionAnchor = nodeId;
+            for (const line of plan.followingMarkdown) {
+              const createdId = variant === "root"
+                ? createChild(nodeId, line)
+                : createSibling(insertionAnchor, line);
+              if (createdId) insertionAnchor = createdId;
             }
             return true;
           },
@@ -105,34 +150,41 @@ export function InlineEditor({ nodeId, value }: Props) {
     });
     view.current = new EditorView({ state, parent: host.current });
     return () => { view.current?.destroy(); view.current = undefined; };
-  }, [nodeId]);
+  }, [nodeId, variant]);
 
   useEffect(() => {
     const editor = view.current;
     if (!editor || editor.state.doc.toString() === value) return;
     syncingValue.current = true;
-    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
+    const docLen = editor.state.doc.length;
+    let selection: { anchor: number } | undefined = undefined;
+    if (isActiveNode && activeNodeCursor !== null) {
+      const anchor = activeNodeCursor === "end" ? value.length : Math.min(activeNodeCursor, value.length);
+      selection = { anchor };
+    }
+    editor.dispatch({
+      changes: { from: 0, to: docLen, insert: value },
+      ...(selection ? { selection } : {}),
+    });
     syncingValue.current = false;
-  }, [value]);
+  }, [value, isActiveNode, activeNodeCursor]);
 
   useEffect(() => {
-    // Creating a sibling/child (e.g. pressing Enter) marks the new node as
-    // active in the store, but nothing moves DOM focus there on its own --
-    // CodeMirror has no idea a brand new sibling view just mounted. Without
-    // this, the caret stays on the node you pressed Enter from instead of
-    // jumping to the new empty line, which is the whole point of Enter in
-    // an outliner. `activeNodeCursor` also lets merge/split operations land
-    // the caret at the exact join/split point instead of always resetting
-    // to the start of the node.
     const editor = view.current;
-    if (!isActiveNode || !editor || editor.hasFocus) return;
-    editor.focus();
-    const docLength = editor.state.doc.length;
-    const anchor = activeNodeCursor === "end" || activeNodeCursor === null
-      ? docLength
-      : Math.min(activeNodeCursor, docLength);
-    editor.dispatch({ selection: { anchor } });
+    if (!isActiveNode || !editor) return;
+    if (!editor.hasFocus) editor.focus();
+    if (activeNodeCursor !== null) {
+      const docLength = editor.state.doc.length;
+      const anchor = activeNodeCursor === "end" ? docLength : Math.min(activeNodeCursor, docLength);
+      editor.dispatch({ selection: { anchor } });
+    }
   }, [isActiveNode, activeNodeCursor]);
 
-  return <div className="inline-editor" ref={host} aria-label="节点内容" />;
+  return (
+    <div
+      className={`inline-editor ${variant === "root" ? "root-inline-editor" : ""}`}
+      ref={host}
+      aria-label={variant === "root" ? "根节点内容" : "节点内容"}
+    />
+  );
 }

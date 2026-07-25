@@ -14,6 +14,7 @@ interface Props { node: NodeRecord & { depth?: number }; }
 export function TreeRow({ node }: Props) {
   const nodes = useNotebookStore((state) => state.nodes);
   const collapsed = useNotebookStore((state) => state.collapsed[node.id]);
+  const ghostSuppressed = useNotebookStore((state) => state.ghostSuppressed[node.id] === true);
   const toggleNode = useNotebookStore((state) => state.toggleNode);
   const enterNode = useNotebookStore((state) => state.enterNode);
   const addAttachment = useNotebookStore((state) => state.addAttachment);
@@ -55,7 +56,7 @@ export function TreeRow({ node }: Props) {
         </div>
         {node.kind !== "date" && <><label className="row-attachment" aria-label="添加附件"><Paperclip size={14} /><input type="file" accept="image/*,.pdf,.txt,.md,.doc,.docx,.zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void addAttachment(node.id, file); event.currentTarget.value = ""; }} /></label></>}
       </div>
-      {isExpanded && children.length === 0 && <GhostRow droppableId={`ghost:child:${node.id}`} parentId={node.id} depth={(node.depth ?? 0) + 1} />}
+      {isExpanded && children.length === 0 && !ghostSuppressed && <GhostRow droppableId={`ghost:child:${node.id}`} parentId={node.id} depth={(node.depth ?? 0) + 1} />}
     </>
   );
 }
