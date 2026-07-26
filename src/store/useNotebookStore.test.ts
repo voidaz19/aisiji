@@ -39,6 +39,21 @@ describe("splitNode (Enter in the middle of content)", () => {
       .map((n) => n.id);
     expect(order).toEqual([node.id, newId, expect.anything()]);
   });
+
+  it("places a split line before existing children when the node is expanded", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "hello world");
+    const firstChild = store.createChild(node.id, "existing child")!;
+    const secondChild = store.createChild(node.id, "another child")!;
+    const newId = store.splitNode(node.id, "hello ", "world")!;
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[newId].parentId).toBe(node.id);
+    expect(childrenOf(state, node.id).map((child) => child.id)).toEqual([newId, firstChild, secondChild]);
+    expect(state.nodes[node.id].markdown).toBe("hello ");
+    expect(state.nodes[newId].markdown).toBe("world");
+  });
 });
 
 describe("editing a content node as the active root", () => {
@@ -148,6 +163,21 @@ describe("mergeWithPrev (Backspace at the start of content)", () => {
     expect(state.activeNodeCursor).toBe("previous".length);
   });
 
+  it("focuses a visible child ghost instead of skipping it after deleting an empty sibling", () => {
+    const store = useNotebookStore.getState();
+    const previous = firstContentNode();
+    store.editMarkdown(previous.id, "previous");
+    store.toggleNode(previous.id);
+    const emptyId = store.createSibling(previous.id, "")!;
+
+    store.mergeWithPrev(emptyId);
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[emptyId].deletedAt).not.toBeNull();
+    expect(state.activeNodeId).toBeNull();
+    expect(state.activeGhostParentId).toBe(previous.id);
+  });
+
   it("blocks merging and preserves node when the node has children", () => {
     const store = useNotebookStore.getState();
     const first = firstContentNode();
@@ -185,8 +215,12 @@ describe("mergeWithPrev (Backspace at the start of content)", () => {
 
     const state = useNotebookStore.getState();
     expect(state.nodes[childId].deletedAt).not.toBeNull();
-    expect(state.ghostSuppressed[parent.id]).toBe(true);
+    expect(state.collapsed[parent.id]).toBe(true);
+    expect(state.ghostSuppressed[parent.id]).toBe(false);
     expect(state.activeNodeId).toBe(parent.id);
+
+    store.toggleNode(parent.id);
+    expect(useNotebookStore.getState().collapsed[parent.id]).toBe(false);
   });
 
   it("allows a child ghost again after a new child is explicitly created", () => {

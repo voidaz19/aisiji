@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { defaultKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { childrenOf } from "../domain/tree";
+import { childrenOf, lastVisibleNodeInSubtree } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { planMultilinePaste } from "./editorClipboard";
+import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme, livePreview } from "./editorTheme";
 
@@ -28,6 +30,7 @@ export function GhostEditor({ parentId }: Props) {
   const handedOff = useRef(false);
   const composing = useRef(false);
   const createChild = useNotebookStore((state) => state.createChild);
+  const toggleNode = useNotebookStore((state) => state.toggleNode);
 
   const shouldFocus = useNotebookStore((state) => state.activeGhostParentId === parentId);
 
@@ -49,24 +52,50 @@ export function GhostEditor({ parentId }: Props) {
       if (newNodeId) focusRealEditor(newNodeId, caret);
     };
 
+    const createBlankChild = () => {
+      createChild(parentId, "");
+      return true;
+    };
+
     const state = EditorState.create({
       doc: "",
       extensions: [
         markdown(),
+        history(),
         livePreview,
         EditorView.lineWrapping,
         keymap.of([
-          {
-            key: "Backspace",
-            run: (editor) => {
+          ...createEditorKeymap({
+            enter: (editor) => {
+              if (editor.state.doc.length > 0) {
+                materialize();
+              } else {
+                createBlankChild();
+              }
+              return true;
+            },
+            createChild: createBlankChild,
+            indent: (editor) => {
+              if (editor.state.doc.length > 0) materialize();
+              return true;
+            },
+            outdent: (editor) => {
+              if (editor.state.doc.length > 0) materialize();
+              return true;
+            },
+            backspace: (editor) => {
               if (!editor.state.selection.main.empty || editor.state.selection.main.head !== 0) return false;
               const notebook = useNotebookStore.getState();
               const siblings = childrenOf(notebook, parentId).filter((node) => node.kind !== "date");
               const previous = siblings[siblings.length - 1];
               if (previous) {
-                notebook.focusNode(previous.id, "end");
+                const target = lastVisibleNodeInSubtree(notebook, previous.id) ?? previous;
+                notebook.focusNode(target.id, "end");
               } else if (notebook.nodes[parentId]?.kind === "content") {
+                toggleNode(parentId);
                 notebook.focusNode(parentId, "end");
+              } else if (notebook.nodes[parentId]) {
+                toggleNode(parentId);
               } else {
                 const row = host.current?.closest<HTMLElement>("[data-ghost-row='true']");
                 row?.classList.remove("is-shaking");
@@ -76,8 +105,11 @@ export function GhostEditor({ parentId }: Props) {
               }
               return true;
             },
-          },
+            delete: () => true,
+            remove: () => true,
+          }),
           ...crossNodeNavigationKeymap,
+          ...historyKeymap,
           ...defaultKeymap,
           indentWithTab,
         ]),
@@ -99,13 +131,29 @@ export function GhostEditor({ parentId }: Props) {
             queueMicrotask(materialize);
             return false;
           },
+          paste: (event) => {
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+            const plan = planMultilinePaste("", 0, 0, text);
+            if (!plan) return false;
+            event.preventDefault();
+            const firstId = createChild(parentId, plan.currentMarkdown);
+            let insertionAnchor = firstId;
+            for (const line of plan.followingMarkdown) {
+              const createdId = createChild(parentId, line);
+              if (createdId) insertionAnchor = createdId;
+            }
+            if (insertionAnchor && insertionAnchor !== firstId) {
+              useNotebookStore.getState().focusNode(insertionAnchor, 0);
+            }
+            return true;
+          },
         }),
         editorTheme,
       ],
     });
     view.current = new EditorView({ state, parent: host.current });
     return () => { view.current?.destroy(); view.current = undefined; };
-  }, [parentId, createChild]);
+  }, [parentId, createChild, toggleNode]);
 
   useEffect(() => {
     const editor = view.current;

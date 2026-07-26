@@ -131,7 +131,15 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       commit(result.state);
       return result.node.id;
     },
-    toggleNode: (nodeId) => commit(toggleCollapsed(get(), nodeId)),
+    toggleNode: (nodeId) => {
+      const next = toggleCollapsed(get(), nodeId);
+      commit(next);
+      if (isNodeExpanded(next, nodeId) && !hasChildren(next, nodeId)) {
+        set((current) => ({
+          ghostSuppressed: { ...current.ghostSuppressed, [nodeId]: false },
+        }));
+      }
+    },
     toggleChildren: (parentId) => {
       const state = get();
       const expandableChildren = childrenOf(state, parentId).filter((child) => hasChildren(state, child.id));
@@ -154,13 +162,17 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       const current = state.nodes[nodeId];
       if (!current) return null;
       const splitsActiveRoot = state.activeRootId === nodeId;
-      const parentId = splitsActiveRoot ? nodeId : (current.parentId ?? ROOT_ID);
+      // When an expanded node already has children, Enter should keep the
+      // new line directly beneath it instead of placing a sibling after the
+      // whole visible subtree.
+      const splitsIntoFirstChild = splitsActiveRoot || (hasChildren(state, nodeId) && isNodeExpanded(state, nodeId));
+      const parentId = splitsIntoFirstChild ? nodeId : (current.parentId ?? ROOT_ID);
       let next = updateMarkdown(state, nodeId, before);
-      const result = createNode(next, parentId, after, "content", null, splitsActiveRoot ? null : nodeId);
+      const result = createNode(next, parentId, after, "content", null, splitsIntoFirstChild ? null : nodeId);
       next = result.state;
-      if (splitsActiveRoot) next = moveAsFirstChild(next, result.node.id, nodeId);
-      if (splitsActiveRoot) next = { ...next, collapsed: { ...next.collapsed, [nodeId]: false } };
-      commit(next, createOperation("create_node", result.node.id, { node: result.node }));
+      if (splitsIntoFirstChild) next = moveAsFirstChild(next, result.node.id, nodeId);
+      if (splitsIntoFirstChild) next = { ...next, collapsed: { ...next.collapsed, [nodeId]: false } };
+      commit(next, createOperation("create_node", result.node.id, { node: next.nodes[result.node.id] }));
       set({ activeNodeId: result.node.id, activeNodeCursor: 0, activeGhostParentId: null });
       return result.node.id;
     },

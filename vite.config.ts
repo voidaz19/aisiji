@@ -27,14 +27,17 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 4173,
+    // 4168-4267 is excluded by the current Windows environment.
+    port: 5173,
     strictPort: true,
-    host: host || false,
+    // Bind to IPv4 explicitly so Windows does not route localhost to ::1,
+    // which can fail with EACCES in environments that restrict IPv6 binds.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 4174,
+          port: 5174,
         }
       : undefined,
     watch: {

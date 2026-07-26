@@ -200,9 +200,9 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .hierarchy-line-group.is-shaking { animation: shake-node 0.22s ease-in-out; transform-box: fill-box; transform-origin: center; }
 .hierarchy-line-hit { fill: none; pointer-events: stroke; cursor: pointer; outline: none; }
 .hierarchy-line { fill: none; stroke: rgba(45,51,46,.12); stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; transition: stroke .22s ease, stroke-width .22s ease; }
-.hierarchy-line-group:hover .hierarchy-line, .hierarchy-line-hit:focus-visible + .hierarchy-line { stroke: var(--ink-faint); stroke-width: 5; outline: none; }
+.hierarchy-line-group:hover .hierarchy-line, .hierarchy-line-hit:focus-visible + .hierarchy-line { stroke: color-mix(in srgb, var(--ink-faint) 72%, transparent); stroke-width: 5; outline: none; }
 
-.tree-row { min-height: 40px; display: flex; align-items: flex-start; gap: 4px; border-radius: var(--r-xs); position: relative; padding-right: 8px; background: transparent; transition: background .22s ease; }
+.tree-row { min-height: 32px; display: flex; align-items: flex-start; gap: 4px; border-radius: var(--r-xs); position: relative; padding-right: 8px; background: transparent; transition: background .22s ease; }
 .tree-row:hover { background: transparent; }
 .tree-row.is-dragging { opacity: .4; }
 
@@ -210,25 +210,29 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
   border: 0; background: transparent; color: var(--ink-faint);
   display: inline-grid; place-items: center; flex: 0 0 auto;
   position: relative; z-index: 3;
-  margin-top: 5px;
+  margin-top: 3px;
 }
-.collapse-button { width: 20px; height: 30px; padding: 0; opacity: 0; pointer-events: none; transition: opacity .22s ease, color .22s ease; transform: translateX(10px); }
+.collapse-button { width: 20px; height: 28px; padding: 0; opacity: 0; pointer-events: none; transition: opacity .22s ease, color .22s ease; transform: translateX(10px); }
 .tree-row:hover .collapse-button, .collapse-button:focus-visible { opacity: 1; pointer-events: auto; }
 .collapse-button:hover { color: var(--ink-muted); }
 
-.node-bullet { width: 24px; height: 30px; color: var(--ink-faint); border-radius: var(--r-xs); touch-action: none; transition: color .22s ease; }
-.node-bullet.has-collapsed-children::before { content: ""; position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; border-radius: 50%; background: currentColor; opacity: .15; transform: translate(-50%, -50%); }
-.node-bullet .node-dot { position: relative; z-index: 1; transition: transform .22s ease; }
-.node-bullet:hover .node-dot { transform: scale(1.2); }
+.node-bullet { width: 24px; height: 28px; color: var(--ink-faint); border-radius: var(--r-xs); touch-action: none; transition: color .22s ease; }
+.node-bullet.has-collapsed-children::before { content: ""; position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: currentColor; opacity: .25; transform: translate(-50%, -50%); }
+.node-bullet .node-dot { position: relative; z-index: 1; opacity: .72; transition: transform .22s ease, opacity .22s ease; }
+.node-bullet:hover .node-dot { transform: scale(1.5); }
+.node-bullet.empty-node-bullet .node-dot { opacity: 0; }
+.tree-row:hover .node-bullet.empty-node-bullet .node-dot,
+.tree-row:focus-within .node-bullet.empty-node-bullet .node-dot,
+.node-bullet.empty-node-bullet:focus .node-dot { opacity: .38; }
 .node-bullet:focus { outline: none; }
 .node-bullet:focus-visible { outline: 2px solid var(--leaf-soft); outline-offset: 2px; }
 .node-bullet.date-bullet { color: var(--leaf); }
 .node-content { flex: 1; min-width: 0; color: var(--ink); position: relative; z-index: 3; }
-.date-content { padding: 9px 0; line-height: 1.6; font-size: 14.5px; font-weight: 600; color: var(--ink-muted); }
+.date-content { padding: 4px 0; line-height: 1.6; font-size: 14.5px; font-weight: 600; color: var(--ink-muted); }
 .cm-editor ::selection { background: var(--leaf-soft); color: inherit; }
 .cm-selectionBackground { background: var(--leaf-soft) !important; }
 
-.row-add, .row-attachment { opacity: 0; width: 28px; height: 28px; border-radius: var(--r-xs); display: inline-grid; place-items: center; color: var(--ink-faint); transition: opacity .22s ease, color .22s ease, background .22s ease; margin-top: 6px; }
+.row-add, .row-attachment { opacity: 0; width: 26px; height: 26px; border-radius: var(--r-xs); display: inline-grid; place-items: center; color: var(--ink-faint); transition: opacity .22s ease, color .22s ease, background .22s ease; margin-top: 3px; }
 .row-attachment { cursor: pointer; }
 .tree-row:hover .row-add, .tree-row:hover .row-attachment { opacity: 1; }
 .row-add:hover, .row-attachment:hover { color: var(--leaf); background: var(--leaf-soft); }
@@ -238,7 +242,7 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .ghost-collapse, .ghost-bullet { pointer-events: none; }
 .ghost-bullet .node-dot { opacity: .38; }
 .ghost-child.is-over { background: var(--leaf-soft); border-radius: var(--r-xs); }
-.inline-editor { width: 100%; min-height: 40px; border: 0; outline: 0; }
+.inline-editor { width: 100%; min-height: 32px; border: 0; outline: 0; }
 
 /* 拖拽预览：真正悬浮于内容之上，使用 soft 阴影 */
 .drag-preview { background: var(--paper); box-shadow: var(--shadow-md); border-radius: var(--r-md); padding: 10px 16px; min-width: 220px; color: var(--ink); font-size: 13.5px; }

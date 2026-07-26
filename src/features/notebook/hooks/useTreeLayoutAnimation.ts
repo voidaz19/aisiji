@@ -7,7 +7,7 @@ interface RowSnapshot {
   left: number;
 }
 
-const ANIMATION_DURATION = 360;
+export const TREE_LAYOUT_ANIMATION_DURATION = 100;
 const ANIMATION_EASING = "cubic-bezier(0.4, 0, 0.2, 1)";
 
 /** Animates rows between two tree layouts using the FLIP technique. */
@@ -22,27 +22,36 @@ export function useTreeLayoutAnimation(
     const container = containerRef.current;
     if (!container) return;
 
-    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-node-id]"));
-    const currentRows = new Map<string, RowSnapshot>();
-    rows.forEach((row) => {
-      const id = row.dataset.nodeId;
-      if (!id) return;
-      const rect = row.getBoundingClientRect();
-      const bullet = row.querySelector<HTMLElement>(".node-bullet")?.getBoundingClientRect();
-      currentRows.set(id, {
-        id,
-        depth: Number(row.dataset.depth ?? 0),
-        top: rect.top,
-        // The row spans the whole list, so its left edge never changes when
-        // indentation changes. The bullet is the actual visual anchor.
-        left: bullet?.left ?? rect.left,
-      });
-    });
+    const captureStableBaseline = () => {
+      // CodeMirror mounts its editor DOM in a regular effect. Capture a new
+      // baseline after that pass whenever rows are added or removed.
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        const frame = window.requestAnimationFrame(() => {
+          previousRows.current = measureRows(container).currentRows;
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
+      previousRows.current = measureRows(container).currentRows;
+      return undefined;
+    };
 
     const previous = previousRows.current;
+    if (previous.size === 0) {
+      return captureStableBaseline();
+    }
+
+    const { rows, currentRows } = measureRows(container);
+
     const currentIds = rows.map((row) => row.dataset.nodeId).filter((id): id is string => Boolean(id));
     const sameNodeSet = previous.size === currentRows.size && currentIds.every((id) => previous.has(id));
-    const structureChanged = sameNodeSet && rows.some((row, index) => {
+    animations.current.forEach((animation) => animation.cancel());
+    animations.current.clear();
+
+    if (!sameNodeSet) {
+      return captureStableBaseline();
+    }
+
+    const structureChanged = rows.some((row, index) => {
       const id = row.dataset.nodeId;
       if (!id) return false;
       const snapshot = previous.get(id);
@@ -51,10 +60,7 @@ export function useTreeLayoutAnimation(
       return !snapshot || !current || snapshot.depth !== current.depth || previousId !== id;
     });
 
-    animations.current.forEach((animation) => animation.cancel());
-    animations.current.clear();
-
-    if (previous.size > 0 && structureChanged && !prefersReducedMotion()) {
+    if (structureChanged && !prefersReducedMotion()) {
       rows.forEach((row) => {
         const id = row.dataset.nodeId;
         if (!id) return;
@@ -70,7 +76,7 @@ export function useTreeLayoutAnimation(
             { transform: `translate(${deltaX}px, ${deltaY}px)` },
             { transform: "translate(0, 0)" },
           ],
-          { duration: ANIMATION_DURATION, easing: ANIMATION_EASING, fill: "both" },
+          { duration: TREE_LAYOUT_ANIMATION_DURATION, easing: ANIMATION_EASING, fill: "both" },
         );
         animations.current.set(id, animation);
         animation.finished.then(() => {
@@ -87,7 +93,27 @@ export function useTreeLayoutAnimation(
   }, [containerRef, ...dependencies]);
 }
 
-function prefersReducedMotion(): boolean {
+function measureRows(container: HTMLDivElement): { rows: HTMLElement[]; currentRows: Map<string, RowSnapshot> } {
+  const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-node-id]"));
+  const currentRows = new Map<string, RowSnapshot>();
+  rows.forEach((row) => {
+    const id = row.dataset.nodeId;
+    if (!id) return;
+    const rect = row.getBoundingClientRect();
+    const bullet = row.querySelector<HTMLElement>(".node-bullet")?.getBoundingClientRect();
+    currentRows.set(id, {
+      id,
+      depth: Number(row.dataset.depth ?? 0),
+      top: rect.top,
+      // The row spans the whole list, so its left edge never changes when
+      // indentation changes. The bullet is the actual visual anchor.
+      left: bullet?.left ?? rect.left,
+    });
+  });
+  return { rows, currentRows };
+}
+
+export function prefersReducedMotion(): boolean {
   return typeof window !== "undefined"
     && typeof window.matchMedia === "function"
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches;

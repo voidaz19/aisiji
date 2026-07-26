@@ -213,7 +213,9 @@ export function indentNode(state: NotebookState, nodeId: string): NotebookState 
   const index = childrenOf(state, parentId).findIndex((item) => item.id === nodeId);
   const previous = childrenOf(state, parentId)[index - 1];
   if (!previous || previous.kind === "date") return state;
-  return moveAsFirstChild(state, nodeId, previous.id);
+  // Indenting changes the hierarchy without reordering the existing content:
+  // append after the previous sibling's current children.
+  return moveAsLastChild(state, nodeId, previous.id);
 }
 
 export function outdentNode(state: NotebookState, nodeId: string): NotebookState {
@@ -221,7 +223,9 @@ export function outdentNode(state: NotebookState, nodeId: string): NotebookState
   if (!node || !node.parentId || node.kind === "date") return state;
   const parent = state.nodes[node.parentId];
   if (!parent) return state;
-  return moveAfter(state, nodeId, parent.id);
+  const next = moveAfter(state, nodeId, parent.id);
+  if (childrenOf(next, parent.id).length > 0) return next;
+  return { ...next, collapsed: { ...next.collapsed, [parent.id]: true } };
 }
 
 export function deleteSubtree(state: NotebookState, nodeId: string): NotebookState {

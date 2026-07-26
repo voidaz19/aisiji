@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab, redo } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { planMultilinePaste } from "./editorClipboard";
+import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme, livePreview } from "./editorTheme";
 
@@ -41,61 +42,31 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
         livePreview,
         EditorView.lineWrapping,
         keymap.of([
-          {
-            key: "Enter",
-            run: (editor) => {
+          ...createEditorKeymap({
+            enter: (editor) => {
               const doc = editor.state.doc.toString();
               const { from, to } = editor.state.selection.main;
-              const before = doc.slice(0, from);
-              const after = doc.slice(to);
-              splitNode(nodeId, before, after);
+              splitNode(nodeId, doc.slice(0, from), doc.slice(to));
               return true;
             },
-          },
-          {
-            key: "Mod-Enter",
-            run: () => { createChild(nodeId, ""); return true; },
-          },
-          {
-            key: "Tab",
-            run: () => { indent(nodeId); return true; },
-          },
-          {
-            key: "Shift-Tab",
-            run: () => { outdent(nodeId); return true; },
-          },
-          {
-            key: "Backspace",
-            run: (editor) => {
+            createChild: () => { createChild(nodeId, ""); return true; },
+            indent: () => { indent(nodeId); return true; },
+            outdent: () => { outdent(nodeId); return true; },
+            backspace: (editor) => {
               const pos = editor.state.selection.main.head;
               const hasSelection = !editor.state.selection.main.empty;
               if (pos === 0 && !hasSelection) { mergeWithPrev(nodeId); return true; }
               return false;
             },
-          },
-          {
-            key: "Delete",
-            run: (editor) => {
+            delete: (editor) => {
               const docLen = editor.state.doc.length;
               const pos = editor.state.selection.main.head;
               const hasSelection = !editor.state.selection.main.empty;
               if (pos === docLen && !hasSelection) { mergeWithNext(nodeId); return true; }
               return false;
             },
-          },
-          {
-            key: "Mod-Shift-Backspace",
-            run: () => { remove(nodeId); return true; },
-          },
-          {
-            key: "Mod-Delete",
-            run: () => { remove(nodeId); return true; },
-          },
-          {
-            key: "Mod-Shift-z",
-            run: redo,
-            preventDefault: true,
-          },
+            remove: () => { remove(nodeId); return true; },
+          }),
           ...crossNodeNavigationKeymap,
           ...historyKeymap,
           ...defaultKeymap,

@@ -91,7 +91,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes }: Props)
             {guideLines.map((line) => {
               const path = `M ${line.x} ${line.y1} V ${line.y2}`;
               return (
-                <g key={line.id} data-hierarchy-node-id={line.id} className="hierarchy-line-group">
+                  <g key={line.id} data-hierarchy-node-id={line.id} className="hierarchy-line-group" style={{ opacity: line.opacity ?? 1 }}>
                   <path className="hierarchy-line-hit" d={path} stroke="transparent" strokeWidth={10} onClick={() => store.toggleChildren(line.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); store.toggleChildren(line.id); } }} tabIndex={0} role="button" aria-label="折叠或展开下一级节点" />
                   <path className="hierarchy-line" d={path} aria-hidden="true" />
                 </g>

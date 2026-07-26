@@ -21,6 +21,34 @@ describe("tree domain", () => {
     expect(state.nodes[second.id].parentId).toBe(date.id);
   });
 
+  it("keeps existing child order when indenting after a node with children", () => {
+    let state = createSeedState("2026-07-20");
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const first = Object.values(state.nodes).find((node) => node.parentId === date.id)!;
+    const firstChildResult = createNode(state, first.id, "existing child");
+    state = firstChildResult.state;
+    const secondResult = createNode(state, date.id, "to indent");
+    state = indentNode(secondResult.state, secondResult.node.id);
+
+    expect(childrenOf(state, first.id).map((node) => node.id)).toEqual([
+      firstChildResult.node.id,
+      secondResult.node.id,
+    ]);
+  });
+
+  it("collapses a parent after outdenting its only child", () => {
+    let state = createSeedState("2026-07-20");
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const parentResult = createNode(state, date.id, "parent");
+    state = parentResult.state;
+    const childResult = createNode(state, parentResult.node.id, "child");
+    state = outdentNode(childResult.state, childResult.node.id);
+
+    expect(state.nodes[childResult.node.id].parentId).toBe(date.id);
+    expect(childrenOf(state, parentResult.node.id)).toHaveLength(0);
+    expect(state.collapsed[parentResult.node.id]).toBe(true);
+  });
+
   it("moves a whole node before or after a target", () => {
     let state = createSeedState("2026-07-20");
     const date = Object.values(state.nodes).find((node) => node.kind === "date")!;

@@ -1,7 +1,18 @@
 import { ROOT_ID, type NotebookState, type Operation } from "../../domain/model";
-import { childrenOf, deleteSubtree, lastVisibleNodeInSubtree, updateMarkdown } from "../../domain/tree";
+import { childrenOf, deleteSubtree, isNodeExpanded, lastVisibleNodeInSubtree, updateMarkdown } from "../../domain/tree";
 import type { NotebookStore } from "../notebookStore.types";
 import { shakeNodeTree } from "../uiFeedback";
+
+function collapseIfEmpty(state: NotebookState, parentId: string): NotebookState {
+  if (childrenOf(state, parentId).length > 0) return state;
+  return { ...state, collapsed: { ...state.collapsed, [parentId]: true } };
+}
+
+function hasVisibleChildGhost(state: NotebookStore, nodeId: string): boolean {
+  return childrenOf(state, nodeId).length === 0
+    && isNodeExpanded(state, nodeId)
+    && state.ghostSuppressed[nodeId] !== true;
+}
 
 interface Context {
   get: () => NotebookStore;
@@ -32,12 +43,19 @@ export function createMergeActions({ get, set, commit, focusAfterNodeRemoval }: 
       const index = siblings.findIndex((candidate) => candidate.id === nodeId);
       if (index > 0) {
         const previous = siblings[index - 1];
+        if (node.markdown === "" && hasVisibleChildGhost(state, previous.id)) {
+          const next = deleteSubtree(state, nodeId);
+          commit(next);
+          focusAfterNodeRemoval(nodeId, null, null, state.activeRootId, previous.id);
+          return;
+        }
         const target = node.markdown === ""
           ? (lastVisibleNodeInSubtree(state, previous.id) ?? previous)
           : previous;
         const mergePosition = target.markdown.length;
         let next = updateMarkdown(state, target.id, target.markdown + node.markdown);
         next = deleteSubtree(next, nodeId);
+        next = collapseIfEmpty(next, parentId);
         commit(next);
         focusAfterNodeRemoval(nodeId, target.id, mergePosition);
         return;
@@ -48,12 +66,11 @@ export function createMergeActions({ get, set, commit, focusAfterNodeRemoval }: 
         const mergePosition = parent.markdown.length;
         let next = updateMarkdown(state, parent.id, parent.markdown + node.markdown);
         next = deleteSubtree(next, nodeId);
+        next = collapseIfEmpty(next, parent.id);
         commit(next);
-        if (node.markdown === "") {
-          set((current) => ({
-            ghostSuppressed: { ...current.ghostSuppressed, [parent.id]: true },
-          }));
-        }
+        set((current) => ({
+          ghostSuppressed: { ...current.ghostSuppressed, [parent.id]: false },
+        }));
         focusAfterNodeRemoval(nodeId, parent.id, mergePosition);
         return;
       }
@@ -68,7 +85,9 @@ export function createMergeActions({ get, set, commit, focusAfterNodeRemoval }: 
         if (nextSibling) focusAfterNodeRemoval(nodeId, nextSibling.id, 0);
         return;
       }
-      commit(deleteSubtree(state, nodeId));
+      let next = deleteSubtree(state, nodeId);
+      next = collapseIfEmpty(next, parentId);
+      commit(next);
       focusAfterNodeRemoval(nodeId, null, null, parentId, parentId);
     },
 

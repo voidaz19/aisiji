@@ -7,7 +7,7 @@ import { InlineEditor } from "./InlineEditor";
 import { GhostEditor } from "./GhostEditor";
 import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
-import type { NodeRecord } from "../domain/model";
+import { ROOT_ID, type NodeRecord } from "../domain/model";
 
 interface Props { node: NodeRecord & { depth?: number }; }
 
@@ -20,6 +20,7 @@ export function TreeRow({ node }: Props) {
   const addAttachment = useNotebookStore((state) => state.addAttachment);
   const children = useMemo(() => childrenOf({ nodes, fields: {}, attachments: {}, collapsed: {} }, node.id), [nodes, node.id]);
   const isExpanded = collapsed === false || (collapsed === undefined && children.length > 0);
+  const isEmptyContent = node.kind === "content" && node.markdown.trim().length === 0;
   const sortable = useSortable({ id: node.id, disabled: node.kind === "date" });
 
   return (
@@ -28,6 +29,7 @@ export function TreeRow({ node }: Props) {
         ref={sortable.setNodeRef}
         data-tree-row="true"
         data-node-id={node.id}
+        data-parent-id={node.parentId ?? ROOT_ID}
         data-depth={node.depth ?? 0}
         className={`tree-row ${sortable.isDragging ? "is-dragging" : ""}`}
         style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition, paddingLeft: `${16 + (node.depth ?? 0) * 28}px` }}
@@ -43,13 +45,13 @@ export function TreeRow({ node }: Props) {
         </button>
         <button
           ref={sortable.setActivatorNodeRef}
-          className={`node-bullet ${node.kind === "date" ? "date-bullet" : ""} ${children.length > 0 && !isExpanded ? "has-collapsed-children" : ""}`}
+          className={`node-bullet ${node.kind === "date" ? "date-bullet" : ""} ${isEmptyContent ? "empty-node-bullet" : ""} ${children.length > 0 && !isExpanded ? "has-collapsed-children" : ""}`}
           type="button"
           onClick={() => enterNode(node.id)}
           {...sortable.listeners}
           aria-label="进入节点，按住拖拽"
         >
-          {node.kind === "date" ? <Circle className="node-dot" size={9} fill="currentColor" /> : <Circle className="node-dot" size={7} fill="currentColor" strokeWidth={2.5} />}
+          {node.kind === "date" ? <Circle className="node-dot" size={9} fill="currentColor" /> : <Circle className="node-dot" size={6} fill="currentColor" strokeWidth={2.5} />}
         </button>
         <div className="node-content">
           {node.kind !== "date" ? <InlineEditor nodeId={node.id} value={node.markdown} /> : <div className="date-content">{node.dateKey}</div>}
@@ -69,12 +71,13 @@ export function GhostRow({ droppableId, parentId, depth }: { droppableId: string
       data-tree-row="true"
       data-depth={depth}
       data-ghost-row="true"
+      data-parent-id={parentId}
       className={`tree-row ghost-child ${droppable.isOver ? "is-over" : ""}`}
       style={{ paddingLeft: `${16 + depth * 28}px` }}
     >
       <span className="collapse-button ghost-collapse" />
       <span className="node-bullet ghost-bullet">
-        <Circle className="node-dot" size={7} fill="currentColor" strokeWidth={2.5} />
+        <Circle className="node-dot" size={6} fill="currentColor" strokeWidth={2.5} />
       </span>
       <div className="node-content">
         <GhostEditor parentId={parentId} />
