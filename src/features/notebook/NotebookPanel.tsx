@@ -16,6 +16,7 @@ import { dateLabel } from "../../shared/date";
 import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { useHierarchyGuides } from "./hooks/useHierarchyGuides";
+import { useTreeLayoutAnimation } from "./hooks/useTreeLayoutAnimation";
 
 interface Props {
   view: WorkspaceView;
@@ -33,6 +34,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes }: Props)
     view === "today" || view === "outline",
     [store.activeNodeId, store.collapsed, store.nodes, visibleNodes, rootId],
   );
+  useTreeLayoutAnimation(treeListRef, [store.collapsed, store.nodes, visibleNodes, rootId]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 280, tolerance: 6 } }),
