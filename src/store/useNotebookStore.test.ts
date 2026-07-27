@@ -54,6 +54,21 @@ describe("splitNode (Enter in the middle of content)", () => {
     expect(state.nodes[node.id].markdown).toBe("hello ");
     expect(state.nodes[newId].markdown).toBe("world");
   });
+
+  it("places a split line after a collapsed parent while preserving its hidden children", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    const childId = store.createChild(node.id, "hidden child")!;
+    store.toggleNode(node.id);
+
+    const newId = store.splitNode(node.id, "before", "after")!;
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[newId].parentId).toBe(node.parentId);
+    expect(state.nodes[childId].parentId).toBe(node.id);
+    expect(state.collapsed[node.id]).toBe(true);
+    expect(childrenOf(state, node.parentId!).map((child) => child.id)).toContain(newId);
+  });
 });
 
 describe("editing a content node as the active root", () => {
@@ -253,6 +268,20 @@ describe("mergeWithPrev (Backspace at the start of content)", () => {
 });
 
 describe("explicit row deletion", () => {
+  it("deletes a selected parent as a complete subtree without listing descendants separately", () => {
+    const store = useNotebookStore.getState();
+    const parent = firstContentNode();
+    const childId = store.createChild(parent.id, "child")!;
+    const grandchildId = store.createChild(childId, "grandchild")!;
+
+    store.removeNodes([parent.id]);
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[parent.id].deletedAt).not.toBeNull();
+    expect(state.nodes[childId].deletedAt).not.toBeNull();
+    expect(state.nodes[grandchildId].deletedAt).not.toBeNull();
+  });
+
   it("focuses the date ghost after deleting its only content child", () => {
     const store = useNotebookStore.getState();
     const node = firstContentNode();

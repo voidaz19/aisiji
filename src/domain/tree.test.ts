@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { childrenOf, createNode, createSeedState, indentNode, isNodeExpanded, moveAfter, moveAsFirstChild, moveAsLastChild, outdentNode, toggleCollapsed, visibleNodes } from "./tree";
+import { childrenOf, createNode, createSeedState, deleteSubtree, indentNode, isNodeExpanded, moveAfter, moveAsFirstChild, moveAsLastChild, outdentNode, restoreSubtree, toggleCollapsed, visibleNodes } from "./tree";
 import { ROOT_ID } from "./model";
 
 describe("tree domain", () => {
@@ -59,6 +59,53 @@ describe("tree domain", () => {
     expect(visibleNodes(state, date.id).map((node) => node.id)).toEqual([result.node.id, first.id]);
     state = moveAsFirstChild(state, first.id, date.id);
     expect(state.nodes[first.id].parentId).toBe(date.id);
+  });
+
+  it("moves a node together with its complete subtree", () => {
+    let state = createSeedState("2026-07-20");
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const parent = Object.values(state.nodes).find((node) => node.parentId === date.id)!;
+    const childResult = createNode(state, parent.id, "child");
+    state = childResult.state;
+    const grandchildResult = createNode(state, childResult.node.id, "grandchild");
+    state = grandchildResult.state;
+    const targetResult = createNode(state, date.id, "target");
+
+    state = moveAsLastChild(targetResult.state, parent.id, targetResult.node.id);
+
+    expect(state.nodes[parent.id].parentId).toBe(targetResult.node.id);
+    expect(state.nodes[childResult.node.id].parentId).toBe(parent.id);
+    expect(state.nodes[grandchildResult.node.id].parentId).toBe(childResult.node.id);
+  });
+
+  it("rejects moving a parent into its own descendant", () => {
+    let state = createSeedState("2026-07-20");
+    const parent = Object.values(state.nodes).find((node) => node.kind === "content")!;
+    const childResult = createNode(state, parent.id, "child");
+    state = childResult.state;
+
+    const result = moveAsLastChild(state, parent.id, childResult.node.id);
+
+    expect(result.nodes[parent.id].parentId).toBe(parent.parentId);
+    expect(result.nodes[childResult.node.id].parentId).toBe(parent.id);
+  });
+
+  it("restores a deleted subtree with its original hierarchy and order", () => {
+    let state = createSeedState("2026-07-20");
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const parent = Object.values(state.nodes).find((node) => node.parentId === date.id)!;
+    const childResult = createNode(state, parent.id, "child");
+    state = childResult.state;
+    const siblingResult = createNode(state, date.id, "sibling");
+    state = siblingResult.state;
+    const orderBeforeDelete = childrenOf(state, date.id).map((node) => node.id);
+
+    state = restoreSubtree(deleteSubtree(state, parent.id), parent.id);
+
+    expect(state.nodes[parent.id].deletedAt).toBeNull();
+    expect(state.nodes[childResult.node.id].deletedAt).toBeNull();
+    expect(state.nodes[childResult.node.id].parentId).toBe(parent.id);
+    expect(childrenOf(state, date.id).map((node) => node.id)).toEqual(orderBeforeDelete);
   });
 
   it("treats empty nodes as collapsed until explicitly expanded", () => {
