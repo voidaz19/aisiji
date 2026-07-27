@@ -1,5 +1,4 @@
-import { useMemo } from "react";
-import { useDroppable } from "@dnd-kit/core";
+import { useMemo, type CSSProperties } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronDown, ChevronRight, Circle, Paperclip } from "lucide-react";
@@ -8,24 +7,27 @@ import { GhostEditor } from "./GhostEditor";
 import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { ROOT_ID, type NodeRecord } from "../domain/model";
+import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP, type TreeLayoutGap } from "../shared/treeLayout";
 
 interface Props {
   node: NodeRecord & { depth?: number };
   selected?: boolean;
-  selectedKeys?: ReadonlySet<string>;
+  hasSubtreeSelection?: boolean;
+  dragDisabled?: boolean;
+  layoutGap?: TreeLayoutGap;
+  subtreeExitCount?: number;
 }
 
-export function TreeRow({ node, selected = false, selectedKeys }: Props) {
+export function TreeRow({ node, selected = false, hasSubtreeSelection = false, dragDisabled = false, layoutGap = "between-subtrees", subtreeExitCount = 0 }: Props) {
   const nodes = useNotebookStore((state) => state.nodes);
   const collapsed = useNotebookStore((state) => state.collapsed[node.id]);
-  const ghostSuppressed = useNotebookStore((state) => state.ghostSuppressed[node.id] === true);
   const toggleNode = useNotebookStore((state) => state.toggleNode);
   const enterNode = useNotebookStore((state) => state.enterNode);
   const addAttachment = useNotebookStore((state) => state.addAttachment);
   const children = useMemo(() => childrenOf({ nodes, fields: {}, attachments: {}, collapsed: {} }, node.id), [nodes, node.id]);
   const isExpanded = collapsed === false || (collapsed === undefined && children.length > 0);
   const isEmptyContent = node.kind === "content" && node.markdown.trim().length === 0;
-  const sortable = useSortable({ id: node.id, disabled: node.kind === "date" });
+  const sortable = useSortable({ id: node.id, disabled: dragDisabled || node.kind === "date" });
 
   return (
     <>
@@ -36,8 +38,8 @@ export function TreeRow({ node, selected = false, selectedKeys }: Props) {
         data-selection-key={node.id}
         data-parent-id={node.parentId ?? ROOT_ID}
         data-depth={node.depth ?? 0}
-        className={`tree-row ${selected ? "is-node-selected" : ""} ${sortable.isDragging ? "is-dragging" : ""}`}
-        style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition, paddingLeft: `${16 + (node.depth ?? 0) * 28}px` }}
+        className={`tree-row layout-gap-${layoutGap} ${selected ? "is-node-selected" : ""} ${hasSubtreeSelection ? "has-subtree-selection" : ""} ${sortable.isDragging ? "is-dragging" : ""}`}
+        style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition, paddingLeft: `${TREE_ROW_LEFT_PADDING + (node.depth ?? 0) * TREE_LEVEL_INDENT}px`, "--tree-object-left": `${TREE_ROW_LEFT_PADDING + TREE_COLLAPSE_WIDTH + (node.depth ?? 0) * TREE_LEVEL_INDENT}px`, "--tree-exit-gap": `${subtreeExitCount * TREE_SUBTREE_GAP}px` } as CSSProperties}
         {...sortable.attributes}
       >
         <button
@@ -63,23 +65,21 @@ export function TreeRow({ node, selected = false, selectedKeys }: Props) {
         </div>
         {node.kind !== "date" && <><label className="row-attachment" aria-label="添加附件"><Paperclip size={14} /><input type="file" accept="image/*,.pdf,.txt,.md,.doc,.docx,.zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void addAttachment(node.id, file); event.currentTarget.value = ""; }} /></label></>}
       </div>
-      {isExpanded && children.length === 0 && !ghostSuppressed && <GhostRow droppableId={`ghost:child:${node.id}`} parentId={node.id} depth={(node.depth ?? 0) + 1} selected={selectedKeys?.has(`ghost:${node.id}`)} />}
     </>
   );
 }
 
-export function GhostRow({ droppableId, parentId, depth, selected = false }: { droppableId: string; parentId: string; depth: number; selected?: boolean }) {
-  const droppable = useDroppable({ id: droppableId });
+export function GhostRow({ droppableId, parentId, depth, selected = false, layoutGap = "between-subtrees", subtreeExitCount = 0 }: { droppableId: string; parentId: string; depth: number; selected?: boolean; layoutGap?: TreeLayoutGap; subtreeExitCount?: number }) {
+  void droppableId;
   return (
     <div
-      ref={droppable.setNodeRef}
       data-tree-row="true"
       data-depth={depth}
       data-ghost-row="true"
       data-selection-key={`ghost:${parentId}`}
       data-parent-id={parentId}
-      className={`tree-row ghost-child ${selected ? "is-node-selected" : ""} ${droppable.isOver ? "is-over" : ""}`}
-      style={{ paddingLeft: `${16 + depth * 28}px` }}
+      className={`tree-row ghost-child layout-gap-${layoutGap} ${selected ? "is-node-selected" : ""}`}
+      style={{ paddingLeft: `${TREE_ROW_LEFT_PADDING + depth * TREE_LEVEL_INDENT}px`, "--tree-object-left": `${TREE_ROW_LEFT_PADDING + TREE_COLLAPSE_WIDTH + depth * TREE_LEVEL_INDENT}px`, "--tree-exit-gap": `${subtreeExitCount * TREE_SUBTREE_GAP}px` } as CSSProperties}
     >
       <span className="collapse-button ghost-collapse" />
       <span className="node-bullet ghost-bullet">

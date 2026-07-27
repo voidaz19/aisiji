@@ -106,9 +106,10 @@ export function createNode(
   kind: "content" | "date" = "content",
   dateKey: string | null = null,
   afterId?: string | null,
+  options: { nodeId?: string; now?: number } = {},
 ): { state: NotebookState; node: NodeRecord } {
   const next = cloneState(state);
-  const now = Date.now();
+  const now = options.now ?? Date.now();
   // Date nodes live in their own ordering track (sorted by dateKey), so
   // always exclude them when anchoring a new node's sortKey. This keeps
   // content-node sortKey arithmetic self-contained and prevents a date
@@ -121,7 +122,7 @@ export function createNode(
   const before = afterIndex >= 0 ? siblings[afterIndex] : siblings[siblings.length - 1];
   const after = afterIndex >= 0 ? siblings[afterIndex + 1] : undefined;
   const node: NodeRecord = {
-    id: newId(kind),
+    id: options.nodeId ?? newId(kind),
     kind,
     parentId,
     sortKey: sortKeyBetween(before, after),
@@ -136,11 +137,11 @@ export function createNode(
   return { state: next, node };
 }
 
-export function updateMarkdown(state: NotebookState, nodeId: string, markdown: string): NotebookState {
+export function updateMarkdown(state: NotebookState, nodeId: string, markdown: string, now = Date.now()): NotebookState {
   const node = state.nodes[nodeId];
   if (!node || node.deletedAt) return state;
   const next = cloneState(state);
-  next.nodes[nodeId] = touch({ ...node, markdown });
+  next.nodes[nodeId] = touch({ ...node, markdown }, now);
   return next;
 }
 
@@ -158,15 +159,15 @@ export function setChildrenExpanded(state: NotebookState, parentId: string, expa
   return next;
 }
 
-export function moveBefore(state: NotebookState, nodeId: string, targetId: string): NotebookState {
-  return moveRelative(state, nodeId, targetId, "before");
+export function moveBefore(state: NotebookState, nodeId: string, targetId: string, now = Date.now()): NotebookState {
+  return moveRelative(state, nodeId, targetId, "before", now);
 }
 
-export function moveAfter(state: NotebookState, nodeId: string, targetId: string): NotebookState {
-  return moveRelative(state, nodeId, targetId, "after");
+export function moveAfter(state: NotebookState, nodeId: string, targetId: string, now = Date.now()): NotebookState {
+  return moveRelative(state, nodeId, targetId, "after", now);
 }
 
-function moveRelative(state: NotebookState, nodeId: string, targetId: string, position: "before" | "after"): NotebookState {
+function moveRelative(state: NotebookState, nodeId: string, targetId: string, position: "before" | "after", now: number): NotebookState {
   const moving = state.nodes[nodeId];
   const target = state.nodes[targetId];
   if (!moving || !target || moving.kind === "date" || target.kind === "date" || moving.id === target.id) return state;
@@ -177,36 +178,36 @@ function moveRelative(state: NotebookState, nodeId: string, targetId: string, po
   const targetIndex = siblings.findIndex((node) => node.id === targetId);
   const before = position === "before" ? siblings[targetIndex - 1] : siblings[targetIndex];
   const after = position === "before" ? siblings[targetIndex] : siblings[targetIndex + 1];
-  next.nodes[nodeId] = touch({ ...moving, parentId, sortKey: sortKeyBetween(before, after) });
+  next.nodes[nodeId] = touch({ ...moving, parentId, sortKey: sortKeyBetween(before, after) }, now);
   normalizeChildren(next, parentId);
   return next;
 }
 
-export function moveAsFirstChild(state: NotebookState, nodeId: string, parentId: string): NotebookState {
+export function moveAsFirstChild(state: NotebookState, nodeId: string, parentId: string, now = Date.now()): NotebookState {
   const moving = state.nodes[nodeId];
   const parent = state.nodes[parentId];
   if (!moving || !parent || moving.kind === "date" || isDescendant(state, parentId, nodeId)) return state;
   const next = cloneState(state);
   const first = activeChildren(next, parentId, nodeId)[0];
-  next.nodes[nodeId] = touch({ ...moving, parentId, sortKey: sortKeyBetween(undefined, first) });
+  next.nodes[nodeId] = touch({ ...moving, parentId, sortKey: sortKeyBetween(undefined, first) }, now);
   normalizeChildren(next, parentId);
   return next;
 }
 
-export function moveAsLastChild(state: NotebookState, nodeId: string, parentId: string): NotebookState {
+export function moveAsLastChild(state: NotebookState, nodeId: string, parentId: string, now = Date.now()): NotebookState {
   const moving = state.nodes[nodeId];
   const parent = state.nodes[parentId];
   if (!moving || moving.kind === "date" || !parent || isDescendant(state, parentId, nodeId)) return state;
   const next = cloneState(state);
   const siblings = activeChildren(next, parentId, nodeId);
   const last = siblings[siblings.length - 1];
-  next.nodes[nodeId] = touch({ ...moving, parentId, sortKey: sortKeyBetween(last, undefined) });
+  next.nodes[nodeId] = touch({ ...moving, parentId, sortKey: sortKeyBetween(last, undefined) }, now);
   normalizeChildren(next, parentId);
   if (parentId !== ROOT_ID) next.collapsed[parentId] = false;
   return next;
 }
 
-export function indentNode(state: NotebookState, nodeId: string): NotebookState {
+export function indentNode(state: NotebookState, nodeId: string, now = Date.now()): NotebookState {
   const node = state.nodes[nodeId];
   if (!node || node.kind === "date") return state;
   const parentId = node.parentId ?? ROOT_ID;
@@ -215,24 +216,23 @@ export function indentNode(state: NotebookState, nodeId: string): NotebookState 
   if (!previous || previous.kind === "date") return state;
   // Indenting changes the hierarchy without reordering the existing content:
   // append after the previous sibling's current children.
-  return moveAsLastChild(state, nodeId, previous.id);
+  return moveAsLastChild(state, nodeId, previous.id, now);
 }
 
-export function outdentNode(state: NotebookState, nodeId: string): NotebookState {
+export function outdentNode(state: NotebookState, nodeId: string, now = Date.now()): NotebookState {
   const node = state.nodes[nodeId];
   if (!node || !node.parentId || node.kind === "date") return state;
   const parent = state.nodes[node.parentId];
   if (!parent) return state;
-  const next = moveAfter(state, nodeId, parent.id);
+  const next = moveAfter(state, nodeId, parent.id, now);
   if (childrenOf(next, parent.id).length > 0) return next;
   return { ...next, collapsed: { ...next.collapsed, [parent.id]: true } };
 }
 
-export function deleteSubtree(state: NotebookState, nodeId: string): NotebookState {
+export function deleteSubtree(state: NotebookState, nodeId: string, now = Date.now()): NotebookState {
   const node = state.nodes[nodeId];
   if (!node) return state;
   const next = cloneState(state);
-  const now = Date.now();
   const visit = (id: string) => {
     const current = next.nodes[id];
     if (!current) return;
@@ -243,15 +243,14 @@ export function deleteSubtree(state: NotebookState, nodeId: string): NotebookSta
   return next;
 }
 
-export function deleteSubtrees(state: NotebookState, nodeIds: readonly string[]): NotebookState {
-  return nodeIds.reduce((next, nodeId) => deleteSubtree(next, nodeId), state);
+export function deleteSubtrees(state: NotebookState, nodeIds: readonly string[], now = Date.now()): NotebookState {
+  return nodeIds.reduce((next, nodeId) => deleteSubtree(next, nodeId, now), state);
 }
 
-export function restoreSubtree(state: NotebookState, nodeId: string): NotebookState {
+export function restoreSubtree(state: NotebookState, nodeId: string, now = Date.now()): NotebookState {
   const node = state.nodes[nodeId];
   if (!node) return state;
   const next = cloneState(state);
-  const now = Date.now();
   const visit = (id: string) => {
     const current = next.nodes[id];
     if (!current) return;

@@ -33,10 +33,7 @@ export interface NotebookStore extends NotebookState {
   editMarkdown: (nodeId: string, markdown: string) => void;
   indent: (nodeId: string) => void;
   outdent: (nodeId: string) => void;
-  moveBefore: (nodeId: string, targetId: string) => void;
-  moveAfter: (nodeId: string, targetId: string) => void;
-  moveFirstChild: (nodeId: string, parentId: string) => void;
-  moveLastChild: (nodeId: string, parentId: string) => void;
+  moveToSlot: (nodeId: string, parentId: string, beforeId: string | null) => void;
   remove: (nodeId: string) => void;
   removeNodes: (nodeIds: string[], focusKey?: string | null) => void;
   restore: (nodeId: string) => void;

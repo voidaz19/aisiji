@@ -5,6 +5,16 @@ export interface NodeRangeSelection {
   headKey: string;
 }
 
+export interface VisibleSelectionEntry {
+  key: string;
+  depth: number;
+}
+
+export interface ExpandedSubtreeSelection {
+  keys: string[];
+  rootKeys: string[];
+}
+
 /** Returns the inclusive range in current visual order, regardless of drag direction. */
 export function keysInRange(order: readonly string[], selection: NodeRangeSelection): string[] {
   const anchorIndex = order.indexOf(selection.anchorKey);
@@ -13,6 +23,33 @@ export function keysInRange(order: readonly string[], selection: NodeRangeSelect
   const from = Math.min(anchorIndex, headIndex);
   const to = Math.max(anchorIndex, headIndex);
   return order.slice(from, to + 1);
+}
+
+/** Expands explicitly selected rows to their complete visible subtrees. */
+export function expandSelectionToSubtrees(
+  entries: readonly VisibleSelectionEntry[],
+  explicitKeys: readonly string[],
+): ExpandedSubtreeSelection {
+  const explicit = new Set(explicitKeys);
+  const expanded = new Set<string>();
+  const rootKeys: string[] = [];
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!explicit.has(entry.key)) continue;
+    if (!expanded.has(entry.key)) rootKeys.push(entry.key);
+    expanded.add(entry.key);
+    for (let cursor = index + 1; cursor < entries.length; cursor += 1) {
+      const descendant = entries[cursor];
+      if (descendant.depth <= entry.depth) break;
+      expanded.add(descendant.key);
+    }
+  }
+
+  return {
+    keys: entries.filter((entry) => expanded.has(entry.key)).map((entry) => entry.key),
+    rootKeys,
+  };
 }
 
 /**

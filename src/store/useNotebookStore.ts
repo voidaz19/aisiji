@@ -1,13 +1,16 @@
 import { create } from "zustand";
-import { createSeedState, ensureDateNode, indentNode, moveAfter, moveAsFirstChild, moveAsLastChild, moveBefore, outdentNode, updateMarkdown, deleteSubtree, deleteSubtrees, restoreSubtree, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
+import { executeDeleteNode, executeDeleteSelection, executeRestoreSubtree } from "../domain/commands/deleteNode";
+import { executeMoveNode, type MoveNodeIntent } from "../domain/commands/moveNode";
+import { executeSplitNode } from "../domain/commands/splitNode";
+import { createSeedState, ensureDateNode, updateMarkdown, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
 import { newId, ROOT_ID, type AttachmentRecord, type NodeField, type Operation, type NotebookState } from "../domain/model";
-import { selectedContentRoots } from "../domain/nodeSelection";
 import { storeAttachment } from "../platform/attachments";
 import { appendNativeOperation, loadNativeWorkspace, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
 import { localDateKey } from "../shared/date";
 import type { NotebookStore } from "./notebookStore.types";
 import { createOperation } from "./operationFactory";
 import { createMergeActions } from "./actions/mergeActions";
+import { shakeNodeTree } from "./uiFeedback";
 
 export { localDateKey } from "../shared/date";
 
@@ -39,6 +42,13 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       patch.rootHistory = rootHistory;
     }
     set(patch);
+  };
+  const moveNode = (
+    command: MoveNodeIntent,
+    operation: Operation,
+  ) => {
+    const result = executeMoveNode(get(), { ...command, now: Date.now() });
+    if (result.changed) commit(result.state, operation);
   };
   return {
     ...initial,
@@ -167,15 +177,19 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       // new line directly beneath it instead of placing a sibling after the
       // whole visible subtree.
       const splitsIntoFirstChild = splitsActiveRoot || (hasChildren(state, nodeId) && isNodeExpanded(state, nodeId));
-      const parentId = splitsIntoFirstChild ? nodeId : (current.parentId ?? ROOT_ID);
-      let next = updateMarkdown(state, nodeId, before);
-      const result = createNode(next, parentId, after, "content", null, splitsIntoFirstChild ? null : nodeId);
-      next = result.state;
-      if (splitsIntoFirstChild) next = moveAsFirstChild(next, result.node.id, nodeId);
-      if (splitsIntoFirstChild) next = { ...next, collapsed: { ...next.collapsed, [nodeId]: false } };
-      commit(next, createOperation("create_node", result.node.id, { node: next.nodes[result.node.id] }));
-      set({ activeNodeId: result.node.id, activeNodeCursor: 0, activeGhostParentId: null });
-      return result.node.id;
+      const newNodeId = newId("content");
+      const result = executeSplitNode(state, {
+        nodeId,
+        before,
+        after,
+        placement: splitsIntoFirstChild ? "first-child" : "after",
+        newNodeId,
+        now: Date.now(),
+      });
+      if (result.status === "rejected") return null;
+      commit(result.state, createOperation("create_node", result.newNodeId, { node: result.state.nodes[result.newNodeId] }));
+      set({ activeNodeId: result.newNodeId, activeNodeCursor: 0, activeGhostParentId: null });
+      return result.newNodeId;
     },
     createChild: (parentId, markdown = "") => {
       const result = createNode(get(), parentId, markdown);
@@ -190,12 +204,12 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       const next = updateMarkdown(get(), nodeId, markdown);
       commit(next, createOperation("update_markdown", nodeId, { markdown }, previous?.revision ?? 0));
     },
-    indent: (nodeId) => commit(indentNode(get(), nodeId), createOperation("indent", nodeId, {})),
-    outdent: (nodeId) => commit(outdentNode(get(), nodeId), createOperation("outdent", nodeId, {})),
-    moveBefore: (nodeId, targetId) => commit(moveBefore(get(), nodeId, targetId), createOperation("move_before", nodeId, { targetId })),
-    moveAfter: (nodeId, targetId) => commit(moveAfter(get(), nodeId, targetId), createOperation("move_after", nodeId, { targetId })),
-    moveFirstChild: (nodeId, parentId) => commit(moveAsFirstChild(get(), nodeId, parentId), createOperation("move_child", nodeId, { parentId })),
-    moveLastChild: (nodeId, parentId) => commit(moveAsLastChild(get(), nodeId, parentId), createOperation("move_child", nodeId, { parentId })),
+    indent: (nodeId) => moveNode({ type: "indent", nodeId }, createOperation("indent", nodeId, {})),
+    outdent: (nodeId) => moveNode({ type: "outdent", nodeId }, createOperation("outdent", nodeId, {})),
+    moveToSlot: (nodeId, parentId, beforeId) => moveNode(
+      { type: "slot", nodeId, parentId, beforeId },
+      createOperation("move_slot", nodeId, { parentId, beforeId }),
+    ),
     remove: (nodeId) => {
       const state = get();
       const node = state.nodes[nodeId];
@@ -212,8 +226,12 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
         nextFocus = parentId;
       }
       const nextGhostParentId = nextFocus ? null : parentId;
-      const next = deleteSubtree(state, nodeId);
-      commit(next, createOperation("delete_subtree", nodeId, {}));
+      const result = executeDeleteNode(state, nodeId, Date.now());
+      if (result.status === "rejected") {
+        if (result.reason === "has-children") shakeNodeTree(state, nodeId);
+        return;
+      }
+      commit(result.state, createOperation("delete_subtree", nodeId, {}));
       focusAfterNodeRemoval(
         nodeId,
         nextFocus,
@@ -224,10 +242,11 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
     },
     removeNodes: (nodeIds, focusKey = null) => {
       const state = get();
-      const roots = selectedContentRoots(state, nodeIds);
+      const result = executeDeleteSelection(state, nodeIds, Date.now());
+      const roots = result.roots;
       if (!roots.length) return;
 
-      const next = deleteSubtrees(state, roots);
+      const next = result.state;
       commit(next, createOperation("delete_subtrees", roots[0], { nodeIds: roots }));
 
       const activeRootRemoved = roots.some((rootId) => {
@@ -260,7 +279,7 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
         set({ activeNodeId: null, activeNodeCursor: null, activeGhostParentId: parentId });
       }
     },
-    restore: (nodeId) => commit(restoreSubtree(get(), nodeId), createOperation("restore_subtree", nodeId, {})),
+    restore: (nodeId) => commit(executeRestoreSubtree(get(), nodeId, Date.now()), createOperation("restore_subtree", nodeId, {})),
     addField: (nodeId, key, type, value) => {
       const field: NodeField = { id: newId("field"), nodeId, key, type, value, updatedAt: Date.now() };
       const next = { ...get(), fields: { ...get().fields, [field.id]: field } };

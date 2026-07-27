@@ -31,6 +31,8 @@ platform -> domain（仅类型）
 - `features` 不应直接调用 `invoke`；平台调用集中在 `platform` 适配器中。
 - `App.tsx` 只作为稳定入口，应用装配位于 `app/AppShell.tsx`。
 - 可测试的筛选、路径和排序规则应写成纯函数，并在同目录添加测试。
+- 节点拆分、合并、移动和删除等完整用户意图放在 `domain/commands/`，由 Store 负责解释交互状态并提交结果。
+- 拖拽的语义插槽放在 `domain/dropSlots.ts`；DOM 测量和插入线布局留在笔记功能模块，横向坐标不得进入领域规则。
 - 模块之间优先通过明确的 props、类型和接口连接，避免新增隐式全局状态。
 
 ## Rust 目录

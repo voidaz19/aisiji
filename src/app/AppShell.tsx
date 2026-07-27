@@ -59,6 +59,8 @@ function prepareView(view: WorkspaceView): Promise<unknown> {
 }
 export function AppShell() {
   const store = useNotebookStore();
+  const layoutDebug = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).has("layout-debug");
   const [view, setView] = useState<WorkspaceView>("home");
   const navigationRequest = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(
@@ -131,7 +133,7 @@ export function AppShell() {
   const SettingsPanel = loadedSettingsPanel;
 
   return (
-    <div className="app-shell" onContextMenu={(event) => event.preventDefault()}>
+    <div className={`app-shell ${layoutDebug ? "layout-debug" : ""}`} onContextMenu={(event) => event.preventDefault()}>
       <AppSidebar open={sidebarOpen} view={view} onNavigate={navigate} onQuickCapture={quickCapture} />
       <main className="workspace">
         <TopBar
@@ -149,7 +151,7 @@ export function AppShell() {
         ) : view === "settings" && SettingsPanel ? (
           <SettingsPanel />
         ) : view !== "settings" && NotebookPanel ? (
-          <NotebookPanel view={view} activeRoot={activeRoot} rootId={rootId} visibleNodes={visible} />
+          <NotebookPanel view={view} activeRoot={activeRoot} rootId={rootId} visibleNodes={visible} layoutDebug={layoutDebug} />
         ) : null}
       </main>
     </div>

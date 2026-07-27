@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
+import { TREE_LAYOUT_ANIMATION_DURATION, TREE_LAYOUT_ANIMATION_EASING } from "../model/treeLayoutMotion";
 
 interface RowSnapshot {
   id: string;
@@ -7,20 +8,25 @@ interface RowSnapshot {
   left: number;
 }
 
-export const TREE_LAYOUT_ANIMATION_DURATION = 100;
-const ANIMATION_EASING = "cubic-bezier(0.4, 0, 0.2, 1)";
+export interface TreeLayoutMotion {
+  id: number;
+  startedAt: number;
+}
 
 /** Animates rows between two tree layouts using the FLIP technique. */
 export function useTreeLayoutAnimation(
   containerRef: RefObject<HTMLDivElement | null>,
   dependencies: readonly unknown[],
-): void {
+): RefObject<TreeLayoutMotion | null> {
   const previousRows = useRef<Map<string, RowSnapshot>>(new Map());
   const animations = useRef<Map<string, Animation>>(new Map());
+  const motion = useRef<TreeLayoutMotion | null>(null);
+  const motionId = useRef(0);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    motion.current = null;
 
     const captureStableBaseline = () => {
       // CodeMirror mounts its editor DOM in a regular effect. Capture a new
@@ -61,22 +67,29 @@ export function useTreeLayoutAnimation(
     });
 
     if (structureChanged && !prefersReducedMotion()) {
-      rows.forEach((row) => {
+      const movements = rows.flatMap((row) => {
         const id = row.dataset.nodeId;
-        if (!id) return;
+        if (!id) return [];
         const before = previous.get(id);
         const after = currentRows.get(id);
-        if (!before || !after) return;
+        if (!before || !after) return [];
         const deltaX = before.left - after.left;
         const deltaY = before.top - after.top;
-        if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return;
-        if (typeof row.animate !== "function") return;
+        if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return [];
+        if (typeof row.animate !== "function") return [];
+        return [{ row, id, deltaX, deltaY }];
+      });
+      if (movements.length > 0) {
+        motionId.current += 1;
+        motion.current = { id: motionId.current, startedAt: typeof performance !== "undefined" ? performance.now() : Date.now() };
+      }
+      movements.forEach(({ row, id, deltaX, deltaY }) => {
         const animation = row.animate(
           [
             { transform: `translate(${deltaX}px, ${deltaY}px)` },
             { transform: "translate(0, 0)" },
           ],
-          { duration: TREE_LAYOUT_ANIMATION_DURATION, easing: ANIMATION_EASING, fill: "both" },
+          { duration: TREE_LAYOUT_ANIMATION_DURATION, easing: TREE_LAYOUT_ANIMATION_EASING, fill: "both" },
         );
         animations.current.set(id, animation);
         animation.finished.then(() => {
@@ -91,6 +104,8 @@ export function useTreeLayoutAnimation(
   // The caller owns the semantic dependencies that represent tree layout changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [containerRef, ...dependencies]);
+
+  return motion;
 }
 
 function measureRows(container: HTMLDivElement): { rows: HTMLElement[]; currentRows: Map<string, RowSnapshot> } {

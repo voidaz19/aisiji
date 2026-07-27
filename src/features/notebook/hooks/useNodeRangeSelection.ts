@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { EditorView } from "@codemirror/view";
-import { keysInRange, type NodeRangeSelection } from "../../../domain/nodeSelection";
+import { expandSelectionToSubtrees, keysInRange, type NodeRangeSelection, type VisibleSelectionEntry } from "../../../domain/nodeSelection";
 import { useNotebookStore } from "../../../store/useNotebookStore";
 
 const GHOST_PREFIX = "ghost:";
@@ -22,11 +22,19 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
   const removeNodes = useNotebookStore((state) => state.removeNodes);
   const nodes = useNotebookStore((state) => state.nodes);
 
-  const order = rowOrder(containerRef.current);
-  const selectedKeys = useMemo(
-    () => new Set(selection ? keysInRange(order, selection) : []),
-    [order.join("\u0000"), selection],
+  const entries = selectionEntries(containerRef.current);
+  const order = entries.map((entry) => entry.key);
+  const entrySignature = entries.map((entry) => entry.key + ":" + entry.depth).join("\u0000");
+  const explicitKeys = useMemo(
+    () => selection ? keysInRange(order, selection) : [],
+    [entrySignature, selection],
   );
+  const expandedSelection = useMemo(
+    () => expandSelectionToSubtrees(entries, explicitKeys),
+    [entrySignature, explicitKeys],
+  );
+  const selectedKeys = useMemo(() => new Set(expandedSelection.keys), [expandedSelection.keys]);
+  const selectionRootKeys = useMemo(() => new Set(expandedSelection.rootKeys), [expandedSelection.rootKeys]);
 
   const clear = useCallback((focusKey?: string) => {
     setSelection(null);
@@ -95,7 +103,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
       if ((event.key === "Backspace" || event.key === "Delete") && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         event.stopPropagation();
-        const keys = keysInRange(currentOrder, selection);
+        const keys = expandedKeysInSelection(containerRef.current, selection);
         const fallback = deletionFallback(currentOrder, keys);
         removeNodes(keys, fallback);
         setSelection(null);
@@ -137,8 +145,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
 
   const selectedText = useCallback(() => {
     if (!selection) return "";
-    const currentOrder = rowOrder(containerRef.current);
-    const keys = keysInRange(currentOrder, selection);
+    const keys = expandedKeysInSelection(containerRef.current, selection);
     const rows = keys
       .map((key) => containerRef.current?.querySelector<HTMLElement>(`[data-selection-key="${CSS.escape(key)}"]`))
       .filter((row): row is HTMLElement => Boolean(row));
@@ -166,7 +173,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
     event.stopPropagation();
     event.clipboardData.setData("text/plain", selectedText());
     const currentOrder = rowOrder(containerRef.current);
-    const keys = keysInRange(currentOrder, selection);
+    const keys = expandedKeysInSelection(containerRef.current, selection);
     const fallback = deletionFallback(currentOrder, keys);
     removeNodes(keys, fallback);
     setSelection(null);
@@ -181,6 +188,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
 
   return {
     selectedKeys,
+    selectionRootKeys,
     clearSelection: clear,
     handlers: {
       onPointerDownCapture,
@@ -196,12 +204,27 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
   };
 }
 
-function rowOrder(container: HTMLElement | null): string[] {
+function selectionEntries(container: HTMLElement | null): VisibleSelectionEntry[] {
   return container
     ? Array.from(container.querySelectorAll<HTMLElement>("[data-selection-key]"))
-        .map((row) => row.dataset.selectionKey)
-        .filter((key): key is string => Boolean(key))
+        .flatMap((row) => {
+          const key = row.dataset.selectionKey;
+          return key ? [{ key, depth: Number(row.dataset.depth ?? 0) }] : [];
+        })
     : [];
+}
+
+function rowOrder(container: HTMLElement | null): string[] {
+  return selectionEntries(container).map((entry) => entry.key);
+}
+
+function expandedKeysInSelection(
+  container: HTMLElement | null,
+  selection: NodeRangeSelection,
+): string[] {
+  const entries = selectionEntries(container);
+  const explicitKeys = keysInRange(entries.map((entry) => entry.key), selection);
+  return expandSelectionToSubtrees(entries, explicitKeys).keys;
 }
 
 function closestSelectionRow(target: EventTarget | null): HTMLElement | null {

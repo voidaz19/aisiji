@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyState } from "./model";
 import { createNode } from "./tree";
-import { keysInRange, selectedContentRoots } from "./nodeSelection";
+import { expandSelectionToSubtrees, keysInRange, selectedContentRoots } from "./nodeSelection";
 
 describe("keysInRange", () => {
   const order = ["date", "a", "ghost:parent", "b"];
@@ -17,6 +17,29 @@ describe("keysInRange", () => {
       "ghost:parent",
       "b",
     ]);
+  });
+});
+
+describe("expandSelectionToSubtrees", () => {
+  const entries = [
+    { key: "parent", depth: 0 },
+    { key: "child", depth: 1 },
+    { key: "grandchild", depth: 2 },
+    { key: "sibling", depth: 0 },
+  ];
+
+  it("selects a parent and all of its visible descendants as one root", () => {
+    expect(expandSelectionToSubtrees(entries, ["parent"])).toEqual({
+      keys: ["parent", "child", "grandchild"],
+      rootKeys: ["parent"],
+    });
+  });
+
+  it("does not create duplicate roots for descendants already covered by a parent", () => {
+    expect(expandSelectionToSubtrees(entries, ["parent", "child", "sibling"])).toEqual({
+      keys: ["parent", "child", "grandchild", "sibling"],
+      rootKeys: ["parent", "sibling"],
+    });
   });
 });
 
