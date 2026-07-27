@@ -11,10 +11,6 @@ interface DragState {
   nodeMode: boolean;
 }
 
-export function ghostSelectionKey(parentId: string): string {
-  return `${GHOST_PREFIX}${parentId}`;
-}
-
 export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null>) {
   const [selection, setSelection] = useState<NodeRangeSelection | null>(null);
   const drag = useRef<DragState | null>(null);

@@ -1,3 +1,4 @@
+import type { EmptyNodeTarget } from "../domain/emptyDrop";
 import type { FieldType, NotebookState, Operation } from "../domain/model";
 
 export interface NotebookStore extends NotebookState {
@@ -34,6 +35,7 @@ export interface NotebookStore extends NotebookState {
   indent: (nodeId: string) => void;
   outdent: (nodeId: string) => void;
   moveToSlot: (nodeId: string, parentId: string, beforeId: string | null) => void;
+  moveToEmptyNode: (nodeId: string, target: EmptyNodeTarget) => void;
   remove: (nodeId: string) => void;
   removeNodes: (nodeIds: string[], focusKey?: string | null) => void;
   restore: (nodeId: string) => void;

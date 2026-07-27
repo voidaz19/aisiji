@@ -88,7 +88,8 @@ describe("NotebookPanel node range selection", () => {
   });
 
   it("draws one debug block for every rendered node row", () => {
-    const { container } = renderOutline(true);
+    const { container, getByLabelText } = renderOutline(true);
+    fireEvent.click(getByLabelText("节点块"));
     const rootNodeBlock = container.querySelector<HTMLElement>('.node-layout-box[data-depth="0"]')!;
     const treeList = container.querySelector<HTMLElement>(".tree-list")!;
 
@@ -101,16 +102,26 @@ describe("NotebookPanel node range selection", () => {
     expect(treeList.style.getPropertyValue("--tree-layout-animation-easing")).toBe("cubic-bezier(0.4, 0, 0.2, 1)");
   });
 
+  it("renders persisted and placeholder rows through the common tree block contract", () => {
+    const { container } = renderOutline();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-row='true']"));
+
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => Boolean(row.dataset.treeBlockKey))).toBe(true);
+    expect(rows.every((row) => row.dataset.treeBlockKind === "node" || row.dataset.treeBlockKind === "placeholder")).toBe(true);
+    expect(rows.some((row) => row.dataset.treeBlockKind === "placeholder")).toBe(true);
+  });
+
   it("toggles each debug block type without changing tree rows", () => {
     const { container, getByLabelText } = renderOutline(true);
     const rowCount = container.querySelectorAll("[data-tree-row='true']").length;
 
     fireEvent.click(getByLabelText("节点块"));
-    expect(container.querySelectorAll(".node-layout-box")).toHaveLength(0);
+    expect(container.querySelectorAll(".node-layout-box")).toHaveLength(rowCount);
     expect(container.querySelectorAll("[data-tree-row='true']")).toHaveLength(rowCount);
 
     fireEvent.click(getByLabelText("节点列表"));
-    expect(container.querySelector(".tree-list")?.hasAttribute("data-debug-tree-list")).toBe(false);
+    expect(container.querySelector(".tree-list")?.hasAttribute("data-debug-tree-list")).toBe(true);
   });
 
   it("measures debug blocks from stable layout offsets instead of animated screen coordinates", () => {
@@ -125,7 +136,8 @@ describe("NotebookPanel node range selection", () => {
       return { x: 0, y: top, top, right: 0, bottom: top + 24, left: 0, width: 0, height: 24, toJSON: () => ({}) };
     });
 
-    const { container } = renderOutline(true);
+    const { container, getByLabelText } = renderOutline(true);
+    fireEvent.click(getByLabelText("节点块"));
     const nodeBlock = container.querySelector<HTMLElement>(".node-layout-box")!;
 
     expect(nodeBlock.style.top).toBe("42px");

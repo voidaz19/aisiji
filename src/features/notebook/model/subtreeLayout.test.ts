@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { subtreeBottomInset, visibleLayoutGap, visibleSubtreeExitCount, visibleSubtreeGroups } from "./subtreeLayout";
+import { measuredTreeBlocks, subtreeBottomInset, visibleLayoutGap, visibleSubtreeExitCount, visibleSubtreeGroups } from "./subtreeLayout";
 
 describe("visible subtree layout groups", () => {
   it("groups a parent with all visible descendants", () => {
@@ -79,5 +79,21 @@ describe("visible subtree layout groups", () => {
     expect(subtreeBottomInset(2, 3, 8)).toBe(8);
     expect(subtreeBottomInset(1, 3, 8)).toBe(16);
     expect(subtreeBottomInset(0, 3, 8)).toBe(24);
+  });
+
+  it("measures nested blocks with a separate bottom boundary for every subtree", () => {
+    const blocks = measuredTreeBlocks([
+      { key: "week", depth: 0, top: 0, bottom: 24 },
+      { key: "plan", depth: 1, top: 32, bottom: 56 },
+      { key: "step", depth: 2, top: 64, bottom: 88 },
+      { key: "next", depth: 0, top: 110, bottom: 134 },
+    ], 8);
+
+    expect(blocks).toMatchObject([
+      { rootId: "week", bottom: 104, isSubtree: true },
+      { rootId: "plan", bottom: 96, isSubtree: true },
+      { rootId: "step", bottom: 88, isSubtree: false },
+      { rootId: "next", bottom: 134, isSubtree: false },
+    ]);
   });
 });

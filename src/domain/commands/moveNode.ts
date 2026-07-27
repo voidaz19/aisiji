@@ -1,4 +1,5 @@
 import type { NotebookState } from "../model";
+import { moveToEmptyNode, type EmptyNodeTarget } from "../emptyDrop";
 import { indentNode, moveAfter, moveAsFirstChild, moveAsLastChild, moveBefore, outdentNode } from "../tree";
 
 export type MoveNodeIntent =
@@ -8,7 +9,8 @@ export type MoveNodeIntent =
   | { type: "after"; nodeId: string; targetId: string }
   | { type: "first-child"; nodeId: string; parentId: string }
   | { type: "last-child"; nodeId: string; parentId: string }
-  | { type: "slot"; nodeId: string; parentId: string; beforeId: string | null };
+  | { type: "slot"; nodeId: string; parentId: string; beforeId: string | null }
+  | { type: "empty-node"; nodeId: string; target: EmptyNodeTarget };
 
 export type MoveNodeCommand = MoveNodeIntent & { now: number };
 
@@ -42,6 +44,9 @@ export function executeMoveNode(state: NotebookState, command: MoveNodeCommand):
       next = command.beforeId
         ? moveBefore(state, command.nodeId, command.beforeId, command.now)
         : moveAsLastChild(state, command.nodeId, command.parentId, command.now);
+      break;
+    case "empty-node":
+      next = moveToEmptyNode(state, command.nodeId, command.target, command.now);
       break;
   }
   return { state: next, changed: next !== state };

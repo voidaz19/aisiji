@@ -49,10 +49,10 @@ function decorate(state: EditorState) {
 }
 
 export const editorTheme = EditorView.theme({
-  "&": { backgroundColor: "transparent", fontFamily: "inherit", fontSize: "14.5px", lineHeight: "1.6", outline: "none", border: "0" },
+  "&": { backgroundColor: "transparent", fontFamily: "inherit", fontSize: "var(--tree-content-font-size)", lineHeight: "var(--tree-content-line-height)", outline: "none", border: "0" },
   "&.cm-focused": { outline: "none" },
-  ".cm-content": { padding: "0", caretColor: "#4f46e5", fontFamily: "inherit", color: "#191919", lineHeight: "1.6", wordBreak: "break-word", overflowWrap: "anywhere" },
-  ".cm-scroller": { overflow: "visible", lineHeight: "1.6", fontFamily: "inherit" },
+  ".cm-content": { padding: "0", caretColor: "#4f46e5", fontFamily: "inherit", color: "#191919", lineHeight: "var(--tree-content-line-height)", wordBreak: "break-word", overflowWrap: "anywhere" },
+  ".cm-scroller": { overflow: "visible", lineHeight: "var(--tree-content-line-height)", fontFamily: "inherit" },
   ".cm-line": { padding: "0", fontFamily: "inherit" },
   ".cm-gutters": { display: "none" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "#dbe0ff" },

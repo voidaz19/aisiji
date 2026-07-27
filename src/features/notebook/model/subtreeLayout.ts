@@ -16,6 +16,22 @@ export interface VisibleSubtreeGroup {
   endIndex: number;
 }
 
+export interface MeasuredTreeRow {
+  key: string;
+  depth: number;
+  top: number;
+  bottom: number;
+}
+
+export interface MeasuredTreeBlock {
+  rootId: string;
+  depth: number;
+  top: number;
+  bottom: number;
+  rootHeight: number;
+  isSubtree: boolean;
+}
+
 /** Describes which kind of vertical space follows a visible node. */
 export function visibleLayoutGap(
   nodes: readonly VisibleLayoutNode[],
@@ -48,6 +64,23 @@ export function visibleSubtreeExitCount(
 /** Returns the cumulative bottom inset for a subtree that ends at a deeper descendant. */
 export function subtreeBottomInset(rootDepth: number, lastDepth: number, gap: number): number {
   return Math.max(0, lastDepth - rootDepth) * gap;
+}
+
+/** Measures every node block and expanded subtree block from the same row geometry. */
+export function measuredTreeBlocks(rows: readonly MeasuredTreeRow[], subtreeGap: number): MeasuredTreeBlock[] {
+  return rows.map((root, startIndex) => {
+    let endIndex = startIndex;
+    while (endIndex + 1 < rows.length && rows[endIndex + 1].depth > root.depth) endIndex += 1;
+    const last = rows[endIndex];
+    return {
+      rootId: root.key,
+      depth: root.depth,
+      top: root.top,
+      bottom: last.bottom + subtreeBottomInset(root.depth, last.depth, subtreeGap),
+      rootHeight: root.bottom - root.top,
+      isSubtree: endIndex > startIndex,
+    };
+  });
 }
 
 /** Finds visible parent subtrees without depending on DOM geometry. */

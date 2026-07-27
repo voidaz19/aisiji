@@ -1,9 +1,9 @@
+import type { TreeBlock } from "../../../components/treeBlock";
 import type { NodeRecord, NotebookState } from "../../../domain/model";
+import { ROOT_ID } from "../../../domain/model";
 import { childrenOf, isNodeExpanded } from "../../../domain/tree";
 
-export type TreeLayoutRow =
-  | { kind: "node"; key: string; depth: number; node: NodeRecord & { depth?: number } }
-  | { kind: "ghost"; key: string; depth: number; parentId: string };
+export type TreeLayoutRow = TreeBlock;
 
 /** Builds the exact row sequence rendered by the tree before spacing is classified. */
 export function treeLayoutRows(
@@ -16,18 +16,40 @@ export function treeLayoutRows(
 
   for (const node of nodes) {
     const depth = node.depth ?? 0;
-    rows.push({ kind: "node", key: node.id, depth, node });
+    const children = childrenOf(state, node.id);
+    rows.push({
+      kind: "node",
+      key: node.id,
+      parentId: node.parentId ?? ROOT_ID,
+      depth,
+      node,
+      emptyTarget: node.kind === "content" && node.markdown.trim().length === 0 && children.length === 0
+        ? { kind: "node", nodeId: node.id }
+        : null,
+    });
 
     const showsChildGhost = isNodeExpanded(state, node.id)
-      && childrenOf(state, node.id).length === 0
+      && children.length === 0
       && ghostSuppressed[node.id] !== true;
     if (showsChildGhost) {
-      rows.push({ kind: "ghost", key: `ghost:${node.id}`, depth: depth + 1, parentId: node.id });
+      rows.push({
+        kind: "placeholder",
+        key: `ghost:${node.id}`,
+        parentId: node.id,
+        depth: depth + 1,
+        emptyTarget: { kind: "placeholder", parentId: node.id },
+      });
     }
   }
 
   if (rootGhostParentId !== null) {
-    rows.push({ kind: "ghost", key: `ghost:${rootGhostParentId}`, depth: 0, parentId: rootGhostParentId });
+    rows.push({
+      kind: "placeholder",
+      key: `ghost:${rootGhostParentId}`,
+      parentId: rootGhostParentId,
+      depth: 0,
+      emptyTarget: { kind: "placeholder", parentId: rootGhostParentId },
+    });
   }
 
   return rows;

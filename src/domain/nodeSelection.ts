@@ -53,7 +53,7 @@ export function expandSelectionToSubtrees(
 }
 
 /**
- * Keeps only deletable content roots. Date rows and transient ghost rows can
+ * Keeps only deletable content roots. Date rows and transient placeholder rows can
  * participate in a visual selection, but are not deleted as notebook data.
  */
 export function selectedContentRoots(state: NotebookState, keys: readonly string[]): string[] {

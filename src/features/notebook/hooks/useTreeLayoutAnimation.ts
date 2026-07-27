@@ -48,7 +48,7 @@ export function useTreeLayoutAnimation(
 
     const { rows, currentRows } = measureRows(container);
 
-    const currentIds = rows.map((row) => row.dataset.nodeId).filter((id): id is string => Boolean(id));
+    const currentIds = rows.map((row) => row.dataset.treeBlockKey).filter((id): id is string => Boolean(id));
     const sameNodeSet = previous.size === currentRows.size && currentIds.every((id) => previous.has(id));
     animations.current.forEach((animation) => animation.cancel());
     animations.current.clear();
@@ -58,7 +58,7 @@ export function useTreeLayoutAnimation(
     }
 
     const structureChanged = rows.some((row, index) => {
-      const id = row.dataset.nodeId;
+      const id = row.dataset.treeBlockKey;
       if (!id) return false;
       const snapshot = previous.get(id);
       const current = currentRows.get(id);
@@ -68,7 +68,7 @@ export function useTreeLayoutAnimation(
 
     if (structureChanged && !prefersReducedMotion()) {
       const movements = rows.flatMap((row) => {
-        const id = row.dataset.nodeId;
+        const id = row.dataset.treeBlockKey;
         if (!id) return [];
         const before = previous.get(id);
         const after = currentRows.get(id);
@@ -109,10 +109,10 @@ export function useTreeLayoutAnimation(
 }
 
 function measureRows(container: HTMLDivElement): { rows: HTMLElement[]; currentRows: Map<string, RowSnapshot> } {
-  const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-node-id]"));
+  const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
   const currentRows = new Map<string, RowSnapshot>();
   rows.forEach((row) => {
-    const id = row.dataset.nodeId;
+    const id = row.dataset.treeBlockKey;
     if (!id) return;
     const rect = row.getBoundingClientRect();
     const bullet = row.querySelector<HTMLElement>(".node-bullet")?.getBoundingClientRect();

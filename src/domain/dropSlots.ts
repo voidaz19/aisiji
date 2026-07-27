@@ -5,14 +5,25 @@ export interface VisibleTreeNode extends NodeRecord {
   depth: number;
 }
 
+export interface VisibleDropPlaceholder {
+  parentId: string;
+}
+
+export interface TreeDropBlockAnchor {
+  kind: "block" | "subtree";
+  key: string;
+}
+
 /** A semantic gap in the flattened outline. No screen coordinate is stored here. */
 export interface TreeDropSlot {
   id: string;
   parentId: string;
   beforeId: string | null;
   depth: number;
-  afterNodeId: string | null;
-  nextNodeId: string | null;
+  afterBlock: TreeDropBlockAnchor | null;
+  nextBlockKey: string | null;
+  /** The slot is the dragged block's current position and therefore a no-op. */
+  isNoop?: boolean;
 }
 
 /**
@@ -25,6 +36,7 @@ export function createTreeDropSlots(
   visibleNodes: readonly VisibleTreeNode[],
   rootId: string,
   movingNodeId?: string | null,
+  placeholders: readonly VisibleDropPlaceholder[] = [],
 ): TreeDropSlot[] {
   const entries = visibleNodes.filter((entry) => {
     const node = state.nodes[entry.id];
@@ -33,17 +45,19 @@ export function createTreeDropSlots(
   if (!entries.length || (movingNodeId && state.nodes[movingNodeId]?.kind === "date")) return [];
 
   const slots: TreeDropSlot[] = [];
+  const placeholderParentIds = new Set(placeholders.map((placeholder) => placeholder.parentId));
   const addSlot = (
     parentId: string,
     beforeId: string | null,
     depth: number,
-    afterNodeId: string | null,
-    nextNodeId: string | null,
+    afterBlock: TreeDropBlockAnchor | null,
+    nextBlockKey: string | null,
   ) => {
-    if (!isValidDropSlot(state, parentId, beforeId, movingNodeId)) return;
+    const isNoop = isCurrentPositionSlot(state, parentId, beforeId, movingNodeId);
+    if (!isNoop && !isValidDropSlot(state, parentId, beforeId, movingNodeId)) return;
     const id = `${parentId}:${beforeId ?? "end"}`;
     if (slots.some((slot) => slot.id === id)) return;
-    slots.push({ id, parentId, beforeId, depth, afterNodeId, nextNodeId });
+    slots.push({ id, parentId, beforeId, depth, afterBlock, nextBlockKey, isNoop: isNoop || undefined });
   };
 
   const first = entries[0];
@@ -54,7 +68,7 @@ export function createTreeDropSlots(
     const next = entries[index + 1];
 
     if (next && next.depth > current.depth) {
-      addSlot(next.parentId ?? current.id, next.id, next.depth, current.id, next.id);
+      addSlot(next.parentId ?? current.id, next.id, next.depth, { kind: "block", key: current.id }, next.id);
       continue;
     }
 
@@ -64,7 +78,16 @@ export function createTreeDropSlots(
       if (!ancestor) continue;
       const parentId = ancestor.parentId ?? rootId;
       const beforeId = next && next.depth === depth && next.parentId === parentId ? next.id : null;
-      addSlot(parentId, beforeId, depth, current.id, next?.id ?? null);
+      addSlot(
+        parentId,
+        beforeId,
+        depth,
+        {
+          kind: ancestor.id === current.id && !placeholderParentIds.has(ancestor.id) ? "block" : "subtree",
+          key: ancestor.id,
+        },
+        next?.id ?? null,
+      );
     }
   }
 
@@ -106,4 +129,30 @@ function isValidDropSlot(
   if (!target || target.deletedAt || target.kind === "date" || target.parentId !== parentId) return false;
   if (beforeId === movingNodeId || isDescendant(state, beforeId, movingNodeId)) return false;
   return true;
+}
+
+function isCurrentPositionSlot(
+  state: NotebookState,
+  parentId: string,
+  beforeId: string | null,
+  movingNodeId?: string | null,
+): boolean {
+  if (!movingNodeId) return false;
+  const moving = state.nodes[movingNodeId];
+  if (!moving || moving.deletedAt || moving.kind === "date") return false;
+
+  const currentParentId = moving.parentId ?? ROOT_ID;
+  if (parentId !== currentParentId) return false;
+
+  // Keep both sides of the source block as neutral boundaries. The self-target
+  // form is never executable, but it prevents the previous block's lower half
+  // from being merged into a neighboring valid slot during hit testing.
+  if (beforeId === movingNodeId) return true;
+
+  const siblings = childrenOf(state, currentParentId).filter((node) => node.kind !== "date");
+  const currentIndex = siblings.findIndex((node) => node.id === movingNodeId);
+  if (currentIndex < 0) return false;
+
+  const nextSibling = siblings[currentIndex + 1];
+  return beforeId === nextSibling?.id || (beforeId === null && !nextSibling);
 }

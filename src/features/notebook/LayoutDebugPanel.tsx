@@ -7,17 +7,19 @@ export interface LayoutDebugVisibility {
   content: boolean;
   attachment: boolean;
   hierarchy: boolean;
+  dropHitZones: boolean;
 }
 
 export const DEFAULT_LAYOUT_DEBUG_VISIBILITY: LayoutDebugVisibility = {
-  treeList: true,
-  nodeBlocks: true,
-  subtreeBlocks: true,
-  collapse: true,
-  bullet: true,
-  content: true,
-  attachment: true,
-  hierarchy: true,
+  treeList: false,
+  nodeBlocks: false,
+  subtreeBlocks: false,
+  collapse: false,
+  bullet: false,
+  content: false,
+  attachment: false,
+  hierarchy: false,
+  dropHitZones: false,
 };
 
 const CONTROLS: ReadonlyArray<{ key: keyof LayoutDebugVisibility; label: string }> = [
@@ -29,6 +31,7 @@ const CONTROLS: ReadonlyArray<{ key: keyof LayoutDebugVisibility; label: string 
   { key: "content", label: "内容区域" },
   { key: "attachment", label: "附件区域" },
   { key: "hierarchy", label: "层级线" },
+  { key: "dropHitZones", label: "插入热区" },
 ];
 
 export function LayoutDebugPanel({ value, onChange }: {

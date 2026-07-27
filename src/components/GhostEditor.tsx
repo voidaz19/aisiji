@@ -97,7 +97,7 @@ export function GhostEditor({ parentId }: Props) {
               } else if (notebook.nodes[parentId]) {
                 toggleNode(parentId);
               } else {
-                const row = host.current?.closest<HTMLElement>("[data-ghost-row='true']");
+                const row = host.current?.closest<HTMLElement>("[data-tree-block-kind='placeholder']");
                 row?.classList.remove("is-shaking");
                 if (row) void row.offsetWidth;
                 row?.classList.add("is-shaking");

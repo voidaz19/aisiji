@@ -11,9 +11,12 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Search, SlidersHorizontal, Trash2 } from "lucide-react";
-import { GhostRow, TreeRow } from "../../components/TreeRow";
+import { flushSync } from "react-dom";
+import { TreeBlockRow } from "../../components/TreeRow";
+import { treeBlockSubtreeKeys } from "../../components/treeBlock";
 import { InlineEditor } from "../../components/InlineEditor";
-import { createTreeDropSlots, type TreeDropSlot, type VisibleTreeNode } from "../../domain/dropSlots";
+import { createTreeDropSlots, type TreeDropSlot, type VisibleDropPlaceholder, type VisibleTreeNode } from "../../domain/dropSlots";
+import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
 import { dateLabel } from "../../shared/date";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP } from "../../shared/treeLayout";
@@ -21,11 +24,12 @@ import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { useHierarchyGuides } from "./hooks/useHierarchyGuides";
 import { useTreeLayoutAnimation } from "./hooks/useTreeLayoutAnimation";
-import { ghostSelectionKey, useNodeRangeSelection } from "./hooks/useNodeRangeSelection";
+import { useNodeRangeSelection } from "./hooks/useNodeRangeSelection";
 import { DEFAULT_LAYOUT_DEBUG_VISIBILITY, LayoutDebugPanel } from "./LayoutDebugPanel";
+import { captureDragPreviewLayout, type DragPreviewLayout } from "./dragPreviewLayout";
 import { visibleDragPreview } from "./model/dragPreview";
-import { closestDropSlot, layoutDropSlots, pointerYFromTranslatedRect, type DropSlotLayout } from "./model/dropIndicator";
-import { subtreeBottomInset, visibleLayoutGap, visibleSubtreeExitCount } from "./model/subtreeLayout";
+import { closestDropSlot, layoutDropSlots, noMoveZone, type DropRect, type DropSlotLayout } from "./model/dropIndicator";
+import { measuredTreeBlocks, visibleLayoutGap, visibleSubtreeExitCount } from "./model/subtreeLayout";
 import { treeLayoutRows } from "./model/treeLayoutRows";
 import { TREE_LAYOUT_ANIMATION_DURATION, TREE_LAYOUT_ANIMATION_EASING } from "./model/treeLayoutMotion";
 
@@ -39,17 +43,35 @@ interface Props {
 
 type MeasuredSubtreeBox = { rootId: string; depth: number; top: number; height: number; rootHeight: number };
 type MeasuredNodeBox = { key: string; depth: number; top: number; height: number };
+type MeasuredDropLayout = { slots: DropSlotLayout[]; sourceZone: DropRect | null };
+type EmptyDropHit = { blockKey: string; target: EmptyNodeTarget };
+type EmptyDropHitZone = EmptyDropHit & DropRect;
+type DragPointer = { clientX: number; clientY: number };
+type DropDebugLayout = {
+  slots: DropSlotLayout[];
+  emptyZones: EmptyDropHitZone[];
+  noMove: DropRect | null;
+  pointerY: number;
+};
 
 export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDebug = false }: Props) {
   const store = useNotebookStore();
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dragPreviewLayout, setDragPreviewLayout] = useState<DragPreviewLayout | null>(null);
+  const [dragPlaceholderOpacity, setDragPlaceholderOpacity] = useState(0);
   const [dropIndicator, setDropIndicator] = useState<DropSlotLayout | null>(null);
+  const [dropDebugLayout, setDropDebugLayout] = useState<DropDebugLayout | null>(null);
+  const [emptyDropTargetKey, setEmptyDropTargetKey] = useState<string | null>(null);
   const [subtreeBoxes, setSubtreeBoxes] = useState<MeasuredSubtreeBox[]>([]);
   const [nodeBoxes, setNodeBoxes] = useState<MeasuredNodeBox[]>([]);
   const [selectionBoxes, setSelectionBoxes] = useState<MeasuredSubtreeBox[]>([]);
   const [layoutDebugVisibility, setLayoutDebugVisibility] = useState(DEFAULT_LAYOUT_DEBUG_VISIBILITY);
   const dropSlotRef = useRef<TreeDropSlot | null>(null);
-  const pointerOffsetRef = useRef<number | null>(null);
+  const activeDragIdRef = useRef<string | null>(null);
+  const dragOriginPointerRef = useRef<DragPointer | null>(null);
+  const dragPointerRef = useRef<DragPointer | null>(null);
+  const updateDropTargetRef = useRef<(pointer: DragPointer) => void>(() => undefined);
+  const emptyDropTargetRef = useRef<EmptyDropHit | null>(null);
   const draggingRef = useRef(false);
   const treeListRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
@@ -87,24 +109,21 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       const measuredNodes = rowInfo.map(({ row, key, depth }): MeasuredNodeBox => {
         return { key, depth, top: row.offsetTop, height: row.offsetHeight };
       });
-      const measured = visibleNodes.flatMap((node): MeasuredSubtreeBox[] => {
-        const startIndex = rowInfo.findIndex((entry) => entry.key === node.id);
-        if (startIndex < 0) return [];
-        const rootDepth = rowInfo[startIndex].depth;
-        let endIndex = startIndex;
-        while (endIndex + 1 < rowInfo.length && rowInfo[endIndex + 1].depth > rootDepth) endIndex += 1;
-        if (endIndex === startIndex) return [];
-        const root = rowInfo[startIndex].row;
-        const last = rowInfo[endIndex].row;
-        const lastDepth = rowInfo[endIndex].depth;
-        return [{
-          rootId: node.id,
-          depth: rootDepth,
-          top: root.offsetTop,
-          height: last.offsetTop + last.offsetHeight - root.offsetTop + subtreeBottomInset(rootDepth, lastDepth, subtreeEdge),
-          rootHeight: root.offsetHeight,
-        }];
-      });
+      const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
+      const measured = measuredTreeBlocks(rowInfo.map(({ row, key, depth }) => ({
+        key,
+        depth,
+        top: row.offsetTop,
+        bottom: row.offsetTop + row.offsetHeight,
+      })), subtreeEdge)
+        .filter((box) => box.isSubtree && visibleNodeIds.has(box.rootId))
+        .map((box): MeasuredSubtreeBox => ({
+          rootId: box.rootId,
+          depth: box.depth,
+          top: box.top,
+          height: box.bottom - box.top,
+          rootHeight: box.rootHeight,
+        }));
       setSubtreeBoxes(layoutDebug ? measured : []);
       setNodeBoxes(layoutDebug ? measuredNodes : []);
       setSelectionBoxes(measured.filter((box) => nodeSelection.selectionRootKeys.has(box.rootId)));
@@ -127,79 +146,205 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     ? Object.values(store.fields).filter((field) => field.nodeId === activeRoot.id)
     : [];
   const dragPreview = dragId ? visibleDragPreview(visibleNodes, dragId) : [];
+  const dragSourceKeys = dragId ? treeBlockSubtreeKeys(renderedRows, dragId) : new Set<string>();
 
-  const measureDropSlots = (movingNodeId: string): DropSlotLayout[] => {
+  const measureDropLayout = (movingNodeId: string): MeasuredDropLayout => {
     const container = treeListRef.current;
-    if (!container) return [];
-    const rowRects = new Map<string, { top: number; bottom: number }>();
+    if (!container) return { slots: [], sourceZone: null };
+    const blockRects = new Map<string, { top: number; bottom: number; left: number; right: number }>();
     const anchorsByDepth = new Map<number, number>();
-    for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-node-id]"))) {
-      const nodeId = row.dataset.nodeId;
-      if (!nodeId) continue;
+    const blockLeftsByDepth = new Map<number, number>();
+    const blocksByKey = new Map(renderedRows.map((block) => [block.key, block]));
+    for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
+      const blockKey = row.dataset.treeBlockKey;
+      if (!blockKey) continue;
       // Layout offsets ignore the temporary drag transform, so gaps remain
       // anchored to the stationary tree while the preview follows the pointer.
       const top = row.offsetTop;
-      rowRects.set(nodeId, { top, bottom: top + row.offsetHeight });
+      const objectLeft = Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0;
+      const rect = {
+        top,
+        bottom: top + row.offsetHeight,
+        left: row.offsetLeft + objectLeft,
+        right: Math.max(row.offsetLeft + objectLeft, container.scrollWidth - 8),
+      };
+      blockRects.set(blockKey, rect);
       const depth = Number(row.dataset.depth ?? 0);
+      if (!blockLeftsByDepth.has(depth)) {
+        blockLeftsByDepth.set(depth, rect.left);
+      }
       const bullet = row.querySelector<HTMLElement>(".node-bullet");
       if (!anchorsByDepth.has(depth) && bullet) {
-        anchorsByDepth.set(depth, row.offsetLeft + bullet.offsetLeft + bullet.offsetWidth / 2 - container.scrollLeft);
+        anchorsByDepth.set(depth, row.offsetLeft + bullet.offsetLeft + bullet.offsetWidth / 2);
       }
     }
-    const endGhost = Array.from(container.querySelectorAll<HTMLElement>("[data-ghost-row='true']"))
-      .find((row) => row.dataset.parentId === rootId);
-    const endY = endGhost
-      ? endGhost.offsetTop
+    const endPlaceholder = blockRects.get(`ghost:${rootId}`);
+    const endY = endPlaceholder
+      ? endPlaceholder.top
       : container.clientHeight;
+    const subtreeGap = Number.parseFloat(getComputedStyle(container).getPropertyValue("--tree-subtree-gap")) || 0;
+    const subtreeRects = new Map(measuredTreeBlocks(
+      renderedRows.flatMap((block) => {
+        const rect = blockRects.get(block.key);
+        return rect ? [{ key: block.key, depth: block.depth, top: rect.top, bottom: rect.bottom }] : [];
+      }),
+      subtreeGap,
+    ).flatMap((measuredBlock) => {
+      const block = blocksByKey.get(measuredBlock.rootId);
+      return block?.kind === "node"
+        ? [[block.node.id, {
+          top: measuredBlock.top,
+          bottom: measuredBlock.bottom,
+          left: blockRects.get(measuredBlock.rootId)?.left ?? 0,
+          right: blockRects.get(measuredBlock.rootId)?.right ?? container.scrollWidth,
+        }] as const]
+        : [];
+    }));
     const state = useNotebookStore.getState();
     const slots = createTreeDropSlots(
       state,
       visibleNodes as VisibleTreeNode[],
       rootId,
       movingNodeId,
+      renderedRows
+        .filter((block): block is Extract<(typeof renderedRows)[number], { kind: "placeholder" }> => block.kind === "placeholder")
+        .map((block): VisibleDropPlaceholder => ({ parentId: block.parentId })),
     );
-    return layoutDropSlots(slots, rowRects, endY, { anchorsByDepth });
+    return {
+      slots: layoutDropSlots(slots, { blocks: blockRects, subtrees: subtreeRects }, endY, {
+        lineLeftByDepth: anchorsByDepth,
+        hitLeftByDepth: blockLeftsByDepth,
+      }),
+      sourceZone: subtreeRects.get(movingNodeId) ?? blockRects.get(movingNodeId) ?? null,
+    };
   };
 
-  const onDragMove = (event: DragMoveEvent) => {
-    if (!draggingRef.current) return;
-    const translated = event.active.rect.current.translated;
+  const updateDropTarget = (pointer: DragPointer) => {
+    const movingNodeId = activeDragIdRef.current;
     const container = treeListRef.current;
-    if (!translated || !container) return;
+    if (!draggingRef.current || !movingNodeId || !container) return;
     const containerRect = container.getBoundingClientRect();
-    const pointerY = pointerYFromTranslatedRect(translated, containerRect.top, pointerOffsetRef.current);
-    const next = closestDropSlot(measureDropSlots(String(event.active.id)), pointerY);
+    const pointerY = pointer.clientY - containerRect.top;
+    const measured = measureDropLayout(movingNodeId);
+    setDragPlaceholderOpacity(sourcePlaceholderOpacity(dragOriginPointerRef.current, pointer));
+    const state = useNotebookStore.getState();
+    const blocksByKey = new Map(renderedRows.map((block) => [block.key, block]));
+    const pointerX = pointer.clientX - containerRect.left + container.scrollLeft;
+    const emptyZones: EmptyDropHitZone[] = [];
+    for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
+      const top = row.offsetTop;
+      const objectLeft = Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0;
+      const blockKey = row.dataset.treeBlockKey;
+      const block = blockKey ? blocksByKey.get(blockKey) : undefined;
+      if (block?.emptyTarget && canDropOnEmptyNode(state, movingNodeId, block.emptyTarget)) {
+        emptyZones.push({
+          blockKey: block.key,
+          target: block.emptyTarget,
+          top,
+          bottom: top + row.offsetHeight,
+          left: row.offsetLeft + objectLeft,
+          right: container.scrollWidth - 8,
+        });
+      }
+    }
+    const directTarget = emptyZones.find((zone) => (
+      pointerY >= zone.top
+      && pointerY <= zone.bottom
+      && pointerX >= zone.left
+      && pointerX <= zone.right
+    )) ?? null;
+    emptyDropTargetRef.current = directTarget;
+    setEmptyDropTargetKey(directTarget?.blockKey ?? null);
+    const next = directTarget ? null : closestDropSlot(
+      measured.slots,
+      { x: pointerX, y: pointerY },
+      measured.sourceZone,
+    );
+    setDropDebugLayout({
+      slots: measured.slots.filter((slot) => !slot.isNoop),
+      emptyZones,
+      noMove: noMoveZone(measured.slots, measured.sourceZone),
+      pointerY,
+    });
     dropSlotRef.current = next;
     setDropIndicator(next);
   };
+  updateDropTargetRef.current = updateDropTarget;
+
+  useLayoutEffect(() => {
+    const updatePointer = (pointer: DragPointer) => {
+      dragPointerRef.current = pointer;
+      updateDropTargetRef.current(pointer);
+    };
+    const onPointerMove = (event: PointerEvent) => updatePointer({ clientX: event.clientX, clientY: event.clientY });
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0] ?? event.changedTouches[0];
+      if (touch) updatePointer({ clientX: touch.clientX, clientY: touch.clientY });
+    };
+    const onScroll = () => {
+      const pointer = dragPointerRef.current;
+      if (pointer) updateDropTargetRef.current(pointer);
+    };
+    window.addEventListener("pointermove", onPointerMove, true);
+    window.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove, true);
+      window.removeEventListener("touchmove", onTouchMove, true);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, []);
+
+  const onDragMove = (_event: DragMoveEvent) => {
+    const pointer = dragPointerRef.current;
+    if (pointer) updateDropTarget(pointer);
+  };
 
   const onDragEnd = (event: DragEndEvent) => {
-    draggingRef.current = false;
-    setDragId(null);
-    setDropIndicator(null);
     const slot = dropSlotRef.current;
-    dropSlotRef.current = null;
-    pointerOffsetRef.current = null;
-    if (!slot) return;
-    store.moveToSlot(String(event.active.id), slot.parentId, slot.beforeId);
+    const directTarget = emptyDropTargetRef.current;
+    const previewRects = measureDragPreviewRows();
+    flushSync(() => {
+      if (directTarget) {
+        store.moveToEmptyNode(String(event.active.id), directTarget.target);
+      } else if (slot) {
+        store.moveToSlot(String(event.active.id), slot.parentId, slot.beforeId);
+      }
+      resetDrag();
+    });
+    animateDroppedRows(previewRects, treeListRef.current);
   };
 
   const resetDrag = () => {
     draggingRef.current = false;
     setDragId(null);
+    setDragPreviewLayout(null);
+    setDragPlaceholderOpacity(0);
     setDropIndicator(null);
+    setDropDebugLayout(null);
+    setEmptyDropTargetKey(null);
     dropSlotRef.current = null;
-    pointerOffsetRef.current = null;
+    emptyDropTargetRef.current = null;
+    activeDragIdRef.current = null;
+    dragOriginPointerRef.current = null;
+    dragPointerRef.current = null;
   };
 
   const onDragStart = (event: DragStartEvent) => {
     draggingRef.current = true;
     dropSlotRef.current = null;
-    const initialRect = event.active.rect.current.initial;
-    const clientY = clientYFromActivator(event.activatorEvent);
-    pointerOffsetRef.current = initialRect && clientY !== null ? clientY - initialRect.top : null;
+    const pointer = clientPointFromActivator(event.activatorEvent);
+    const movingNodeId = String(event.active.id);
+    activeDragIdRef.current = movingNodeId;
+    dragOriginPointerRef.current = pointer;
+    dragPointerRef.current = pointer;
     setDropIndicator(null);
-    setDragId(String(event.active.id));
+    setDragPreviewLayout(captureDragPreviewLayout(
+      treeListRef.current,
+      visibleDragPreview(visibleNodes, movingNodeId).map(({ node }) => node.id),
+    ));
+    setDragId(movingNodeId);
+    if (pointer) updateDropTarget(pointer);
   };
 
   return (
@@ -253,7 +398,11 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
           data-debug-content={layoutDebugVisibility.content || undefined}
           data-debug-attachment={layoutDebugVisibility.attachment || undefined}
           data-debug-hierarchy={layoutDebugVisibility.hierarchy || undefined}
-          style={{ "--tree-layout-animation-duration": `${TREE_LAYOUT_ANIMATION_DURATION}ms`, "--tree-layout-animation-easing": TREE_LAYOUT_ANIMATION_EASING } as CSSProperties}
+          style={{
+            "--tree-layout-animation-duration": `${TREE_LAYOUT_ANIMATION_DURATION}ms`,
+            "--tree-layout-animation-easing": TREE_LAYOUT_ANIMATION_EASING,
+            "--drag-source-opacity": dragPlaceholderOpacity,
+          } as CSSProperties}
         >
           {selectionBoxes.length > 0 && <div className="selection-subtree-overlay" aria-hidden="true">
             {selectionBoxes.map((box) => (
@@ -278,23 +427,80 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
             })}
           </svg>
           {visibleNodes.length === 0 && view === "trash" && <EmptyState />}
+          {layoutDebug && layoutDebugVisibility.dropHitZones && dropDebugLayout && (
+            <div className="drop-hit-zone-overlay" aria-hidden="true">
+              {dropDebugLayout.slots.map((slot) => (
+                <div
+                  key={`${slot.id}:${slot.hitZone.top}:${slot.hitZone.left}:${slot.hitZone.bottom}`}
+                  className={`drop-hit-zone ${dropIndicator?.id === slot.id ? "is-active" : ""}`}
+                  style={{
+                    top: slot.hitZone.top,
+                    left: slot.hitZone.left,
+                    right: Math.max(0, (treeListRef.current?.scrollWidth ?? 0) - slot.hitZone.right),
+                    height: Math.max(0, slot.hitZone.bottom - slot.hitZone.top),
+                  }}
+                >
+                  <span>层级 {slot.depth + 1}</span>
+                </div>
+              ))}
+              {dropDebugLayout.emptyZones.map((zone) => (
+                <div
+                  key={`empty:${zone.blockKey}`}
+                  className={`empty-drop-hit-zone ${emptyDropTargetKey === zone.blockKey ? "is-active" : ""}`}
+                  style={{ top: zone.top, left: zone.left, right: Math.max(0, (treeListRef.current?.scrollWidth ?? 0) - zone.right), height: zone.bottom - zone.top }}
+                >
+                  <span>空节点</span>
+                </div>
+              ))}
+              {dropDebugLayout.noMove && (
+                <div className="drop-source-zone" style={{
+                  top: dropDebugLayout.noMove.top,
+                  left: dropDebugLayout.noMove.left,
+                  right: Math.max(0, (treeListRef.current?.scrollWidth ?? 0) - dropDebugLayout.noMove.right),
+                  height: dropDebugLayout.noMove.bottom - dropDebugLayout.noMove.top,
+                }}>
+                  <span>原位，不移动</span>
+                </div>
+              )}
+            </div>
+          )}
+          {layoutDebug && layoutDebugVisibility.dropHitZones && dropDebugLayout && (
+            <div className="drag-pointer-marker" style={{ top: dropDebugLayout.pointerY }} aria-hidden="true"><span>鼠标命中基准</span></div>
+          )}
           {dropIndicator && <div className="tree-drop-indicator" style={{ top: dropIndicator.top, left: dropIndicator.left }} aria-hidden="true" />}
           {renderedRows.map((row, index) => {
             const layoutGap = visibleLayoutGap(renderedRows, index);
             const subtreeExitCount = visibleSubtreeExitCount(renderedRows, index);
-            return row.kind === "node"
-              ? <TreeRow key={row.key} node={row.node as NodeRecord & { depth?: number }} layoutGap={layoutGap} subtreeExitCount={subtreeExitCount} selected={nodeSelection.selectionRootKeys.has(row.key)} hasSubtreeSelection={selectionBoxes.some((box) => box.rootId === row.key)} dragDisabled={view === "search" || view === "trash"} />
-              : <GhostRow key={row.key} droppableId={`ghost:${row.parentId}`} parentId={row.parentId} depth={row.depth} layoutGap={layoutGap} subtreeExitCount={subtreeExitCount} selected={nodeSelection.selectionRootKeys.has(ghostSelectionKey(row.parentId))} />;
+            return <TreeBlockRow
+              key={row.key}
+              block={row}
+              layoutGap={layoutGap}
+              subtreeExitCount={subtreeExitCount}
+              selected={nodeSelection.selectionRootKeys.has(row.key)}
+              hasSubtreeSelection={row.kind === "node" && selectionBoxes.some((box) => box.rootId === row.key)}
+              dragDisabled={view === "search" || view === "trash"}
+              sourcePlaceholder={dragSourceKeys.has(row.key)}
+              emptyDropTarget={emptyDropTargetKey === row.key}
+            />;
           })}
         </div>
         <DragOverlay dropAnimation={null}>
           {dragPreview.length > 0 ? (
-            <div className="drag-preview" aria-hidden="true">
+            <div className="drag-preview" aria-hidden="true" style={dragPreviewLayout ? { width: dragPreviewLayout.width } : undefined}>
               {dragPreview.map(({ node }, index) => (
-                <div key={node.id} className={`drag-preview-row layout-gap-${visibleLayoutGap(dragPreview.map(({ node: previewNode }) => previewNode), index)}`} style={{ paddingLeft: `${TREE_ROW_LEFT_PADDING + (node.depth ?? 0) * TREE_LEVEL_INDENT}px`, "--tree-exit-gap": `${visibleSubtreeExitCount(dragPreview.map(({ node: previewNode }) => previewNode), index) * TREE_SUBTREE_GAP}px` } as CSSProperties}>
+                <div
+                  key={node.id}
+                  data-drag-preview-key={node.id}
+                  className={`drag-preview-row layout-gap-${visibleLayoutGap(dragPreview.map(({ node: previewNode }) => previewNode), index)}`}
+                  style={{
+                    paddingLeft: `${TREE_ROW_LEFT_PADDING + (node.depth ?? 0) * TREE_LEVEL_INDENT}px`,
+                    "--tree-exit-gap": `${visibleSubtreeExitCount(dragPreview.map(({ node: previewNode }) => previewNode), index) * TREE_SUBTREE_GAP}px`,
+                    ...dragPreviewLayout?.rows.get(node.id)?.rowStyle,
+                  } as CSSProperties}
+                >
                   <span className="drag-preview-collapse-space" />
                   <span className="drag-preview-bullet"><span className="drag-preview-dot" /></span>
-                  <span className="drag-preview-text">
+                  <span className="drag-preview-text" style={dragPreviewLayout?.rows.get(node.id)?.textStyle}>
                     {node.kind === "date" ? node.dateKey : node.markdown || "未命名节点"}
                   </span>
                 </div>
@@ -321,11 +527,62 @@ function heading(view: WorkspaceView, activeRoot: NodeRecord | null): string {
   return "所有笔记";
 }
 
-function clientYFromActivator(event: Event): number | null {
+function clientPointFromActivator(event: Event): DragPointer | null {
   const pointerEvent = event as PointerEvent;
-  if (Number.isFinite(pointerEvent.clientY)) return pointerEvent.clientY;
+  if (Number.isFinite(pointerEvent.clientX) && Number.isFinite(pointerEvent.clientY)) {
+    return { clientX: pointerEvent.clientX, clientY: pointerEvent.clientY };
+  }
   const touchEvent = event as TouchEvent;
-  return touchEvent.touches?.[0]?.clientY ?? touchEvent.changedTouches?.[0]?.clientY ?? null;
+  const touch = touchEvent.touches?.[0] ?? touchEvent.changedTouches?.[0];
+  return touch ? { clientX: touch.clientX, clientY: touch.clientY } : null;
+}
+
+function sourcePlaceholderOpacity(origin: DragPointer | null, pointer: DragPointer): number {
+  if (!origin) return 0;
+  const distance = Math.hypot(pointer.clientX - origin.clientX, pointer.clientY - origin.clientY);
+  return Math.min(0.3, distance / 80 * 0.3);
+}
+
+interface DragPreviewPosition {
+  top: number;
+  anchorX: number;
+}
+
+function measureDragPreviewRows(): Map<string, DragPreviewPosition> {
+  return new Map(Array.from(document.querySelectorAll<HTMLElement>("[data-drag-preview-key]")).flatMap((row) => {
+    const key = row.dataset.dragPreviewKey;
+    const rowRect = row.getBoundingClientRect();
+    const bulletRect = row.querySelector<HTMLElement>(".drag-preview-bullet")?.getBoundingClientRect();
+    return key ? [[key, {
+      top: rowRect.top,
+      anchorX: bulletRect ? bulletRect.left + bulletRect.width / 2 : rowRect.left,
+    }] as const] : [];
+  }));
+}
+
+function animateDroppedRows(previewPositions: ReadonlyMap<string, DragPreviewPosition>, container: HTMLElement | null): void {
+  if (!container || previewPositions.size === 0) return;
+  for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
+    const key = row.dataset.treeBlockKey;
+    const preview = key ? previewPositions.get(key) : undefined;
+    if (!preview) continue;
+
+    // The tree FLIP animation initially renders this row at its old layout
+    // position. Remove that transform before measuring the actual destination.
+    row.getAnimations().forEach((animation) => animation.cancel());
+    const target = row.getBoundingClientRect();
+    const targetBullet = row.querySelector<HTMLElement>(".node-bullet")?.getBoundingClientRect();
+    const targetAnchorX = targetBullet ? targetBullet.left + targetBullet.width / 2 : target.left;
+    const x = preview.anchorX - targetAnchorX;
+    const y = preview.top - target.top;
+    row.animate(
+      [
+        { opacity: 0.58, transform: `translate(${x}px, ${y}px)` },
+        { opacity: 1, transform: "translate(0, 0)" },
+      ],
+      { duration: TREE_LAYOUT_ANIMATION_DURATION, easing: TREE_LAYOUT_ANIMATION_EASING },
+    );
+  }
 }
 
 function EmptyState() {

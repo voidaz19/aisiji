@@ -32,13 +32,31 @@ describe("rendered tree layout rows", () => {
 
     expect(rows.map(({ kind, key, depth }) => ({ kind, key, depth }))).toEqual([
       { kind: "node", key: "parent", depth: 0 },
-      { kind: "ghost", key: "ghost:parent", depth: 1 },
+      { kind: "placeholder", key: "ghost:parent", depth: 1 },
       { kind: "node", key: "sibling", depth: 0 },
     ]);
     expect(rows.map((_, index) => visibleLayoutGap(rows, index))).toEqual([
       "inside-subtree",
       "subtree-end",
       "between-subtrees",
+    ]);
+    expect(rows[1].emptyTarget).toEqual({ kind: "placeholder", parentId: "parent" });
+  });
+
+  it("exposes real and placeholder empty rows through the same target property", () => {
+    const state = createEmptyState();
+    const empty = { ...content("empty", ROOT_ID, 1, 0), markdown: "" };
+    const expanded = content("expanded", ROOT_ID, 2, 0);
+    state.nodes[empty.id] = empty;
+    state.nodes[expanded.id] = expanded;
+    state.collapsed[expanded.id] = false;
+
+    const rows = treeLayoutRows([empty, expanded], state, {}, null);
+
+    expect(rows.map((row) => row.emptyTarget)).toEqual([
+      { kind: "node", nodeId: "empty" },
+      null,
+      { kind: "placeholder", parentId: "expanded" },
     ]);
   });
 

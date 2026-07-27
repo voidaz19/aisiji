@@ -24,7 +24,7 @@ interface GuideEntry {
   id: string;
   parentId: string;
   depth: number;
-  ghost: boolean;
+  placeholder: boolean;
   measured: ReturnType<typeof visualObjectRect>;
 }
 
@@ -186,21 +186,20 @@ export function useHierarchyGuides(
       const subtreeEdge = Number.parseFloat(getComputedStyle(container).getPropertyValue("--tree-subtree-gap")) || 0;
       const entries: GuideEntry[] = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-row='true']"))
         .map((row, index) => {
-          const ghost = row.dataset.ghostRow === "true";
           const parentId = row.dataset.parentId ?? "root";
           return {
             row,
-            id: row.dataset.nodeId ?? `ghost:${parentId}:${row.dataset.depth ?? index}`,
+            id: row.dataset.treeBlockKey ?? `row:${index}`,
             parentId,
             depth: Number(row.dataset.depth ?? 0),
-            ghost,
+            placeholder: row.dataset.treeBlockKind === "placeholder",
             measured: visualObjectRect(row, containerRect.top),
           };
         });
       const lines: GuideLine[] = [];
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
-        if (entry.ghost || !entry.measured) continue;
+        if (entry.placeholder || !entry.measured) continue;
         const firstChild = findFirstChild(entries, index, entry);
         if (!firstChild) continue;
         let lastDescendant = index + 1;

@@ -210,6 +210,10 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       { type: "slot", nodeId, parentId, beforeId },
       createOperation("move_slot", nodeId, { parentId, beforeId }),
     ),
+    moveToEmptyNode: (nodeId, target) => moveNode(
+      { type: "empty-node", nodeId, target },
+      createOperation("move_to_empty_node", nodeId, { target }),
+    ),
     remove: (nodeId) => {
       const state = get();
       const node = state.nodes[nodeId];
