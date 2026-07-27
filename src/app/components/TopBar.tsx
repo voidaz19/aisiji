@@ -30,6 +30,10 @@ export function TopBar({
   onOpenRoot,
   onOpenViewRoot,
 }: Props) {
+  const collapsedBreadcrumbs = parentBreadcrumbs.slice(0, -2);
+  const visibleBreadcrumbs = parentBreadcrumbs.slice(-2);
+  const collapsedTarget = collapsedBreadcrumbs[collapsedBreadcrumbs.length - 1];
+
   return (
     <header className="topbar" data-tauri-drag-region>
       <button className="icon-button" type="button" onClick={onToggleSidebar} aria-label="切换侧栏">
@@ -43,16 +47,37 @@ export function TopBar({
             {atViewRoot ? <span className="breadcrumb-current">{VIEW_LABELS[view]}</span> : (
               <>
                 <button type="button" onClick={onOpenViewRoot}>{VIEW_LABELS[view]}</button>
-                {parentBreadcrumbs.map((node) => (
+                {collapsedTarget ? (
+                  <>
+                    <span>/</span>
+                    <button
+                      className="breadcrumb-overflow"
+                      type="button"
+                      title={collapsedBreadcrumbs.map(nodeLabel).join(" / ")}
+                      aria-label={`打开上级节点：${nodeLabel(collapsedTarget)}`}
+                      onClick={() => onOpenRoot(collapsedTarget.id)}
+                    >
+                      …
+                    </button>
+                  </>
+                ) : null}
+                {visibleBreadcrumbs.map((node) => (
                   <Fragment key={node.id}>
                     <span>/</span>
-                    <button className="breadcrumb-node" type="button" onClick={() => onOpenRoot(node.id)}>
+                    <button
+                      className="breadcrumb-node"
+                      type="button"
+                      title={nodeLabel(node)}
+                      onClick={() => onOpenRoot(node.id)}
+                    >
                       {nodeLabel(node)}
                     </button>
                   </Fragment>
                 ))}
                 <span>/</span>
-                <span className="breadcrumb-current">{activeRoot ? nodeLabel(activeRoot) : ""}</span>
+                <span className="breadcrumb-current" title={activeRoot ? nodeLabel(activeRoot) : undefined}>
+                  {activeRoot ? nodeLabel(activeRoot) : ""}
+                </span>
               </>
             )}
           </>

@@ -75,7 +75,7 @@ describe("visible subtree layout groups", () => {
     ], 2)).toBe(2);
   });
 
-  it("gives every containing subtree its own bottom inset", () => {
+  it("keeps a separate bottom inset for every containing subtree", () => {
     expect(subtreeBottomInset(2, 3, 8)).toBe(8);
     expect(subtreeBottomInset(1, 3, 8)).toBe(16);
     expect(subtreeBottomInset(0, 3, 8)).toBe(24);

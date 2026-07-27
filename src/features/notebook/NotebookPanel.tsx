@@ -350,7 +350,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   return (
     <div ref={contentAreaRef} className={`content-area ${nodeSelection.selectedKeys.size ? "has-node-selection" : ""}`} {...nodeSelection.handlers}>
       <section className="content-header">
-        <div>
+        <div className="content-heading">
           <p className="eyebrow">{eyebrow(view)}</p>
           {activeRoot?.kind === "content" && view !== "search" && view !== "trash" ? (
             <div
@@ -365,11 +365,11 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
             </div>
           ) : <h1>{heading(view, activeRoot)}</h1>}
         </div>
-        <div className="header-tools">
-          {view === "search" && (
+        {view === "search" && (
+          <div className="header-tools">
             <div className="search-input"><Search size={16} /><input autoFocus value={store.query} onChange={(event) => store.setQuery(event.target.value)} placeholder="搜索节点内容" /></div>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       {activeRoot && view !== "search" && view !== "trash" && activeFields.length > 0 && (

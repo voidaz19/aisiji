@@ -61,8 +61,11 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
     if (!currentDrag.nodeMode && headKey === currentDrag.anchorKey) return;
     if (!currentDrag.nodeMode) {
       currentDrag.nodeMode = true;
-      collapseEditorSelections(containerRef.current);
-      window.getSelection()?.removeAllRanges();
+      // CodeMirror keeps its own document-level mousemove listener alive for
+      // the duration of a text drag. Stop this event before clearing its state,
+      // otherwise the next mousemove can recreate the text selection.
+      event.preventDefault();
+      clearEditorSelections(containerRef.current);
       event.currentTarget.setPointerCapture?.(event.pointerId);
     }
     event.preventDefault();
@@ -79,8 +82,19 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
     if (currentDrag.nodeMode) {
       suppressClick.current = true;
       setTimeout(() => { suppressClick.current = false; }, 0);
+      // CodeMirror handles mouseup on the document after pointerup capture.
+      // Clear once more on the next task so that handler cannot leave a stale
+      // selection behind.
+      setTimeout(() => clearEditorSelections(containerRef.current), 0);
     }
-  }, []);
+  }, [containerRef]);
+
+  const onMouseMoveCapture = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (!drag.current?.nodeMode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearEditorSelections(containerRef.current);
+  }, [containerRef]);
 
   const onClickCapture = useCallback((event: MouseEvent<HTMLElement>) => {
     if (!suppressClick.current) return;
@@ -135,6 +149,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
       if (!currentKey || !nextKey) return;
       event.preventDefault();
       event.stopPropagation();
+      clearEditorSelections(containerRef.current);
       setSelection({ anchorKey: currentKey, headKey: nextKey });
     }
   }, [clear, containerRef, removeNodes, selection]);
@@ -191,6 +206,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
       onPointerMoveCapture,
       onPointerUpCapture: finishPointerSelection,
       onPointerCancelCapture: finishPointerSelection,
+      onMouseMoveCapture,
       onClickCapture,
       onKeyDownCapture,
       onCopyCapture: onCopy,
@@ -249,6 +265,11 @@ function collapseEditorSelections(container: HTMLElement | null): void {
       editor.dispatch({ selection: { anchor: editor.state.selection.main.head } });
     }
   }
+}
+
+function clearEditorSelections(container: HTMLElement | null): void {
+  collapseEditorSelections(container);
+  window.getSelection()?.removeAllRanges();
 }
 
 function isArrowKey(key: string): boolean {

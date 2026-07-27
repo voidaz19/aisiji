@@ -61,7 +61,7 @@ export function visibleSubtreeExitCount(
   return Math.max(0, currentDepth - nextDepth);
 }
 
-/** Returns the cumulative bottom inset for a subtree that ends at a deeper descendant. */
+/** Returns one fixed inset for every containing subtree boundary. */
 export function subtreeBottomInset(rootDepth: number, lastDepth: number, gap: number): number {
   return Math.max(0, lastDepth - rootDepth) * gap;
 }

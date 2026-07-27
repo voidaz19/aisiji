@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOT_ID } from "../../domain/model";
 import { visibleNodes } from "../../domain/tree";
@@ -79,6 +80,26 @@ describe("NotebookPanel node range selection", () => {
     expect(container.querySelectorAll(".selection-subtree-box > .selection-subtree-root")).toHaveLength(1);
   });
 
+  it("clears editor text selection for the rest of a cross-node mouse drag", () => {
+    const state = useNotebookStore.getState();
+    const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    const { container } = renderOutline();
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const targetRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const host = sourceRow.querySelector<HTMLElement>(".inline-editor")!;
+    const editor = EditorView.findFromDOM(host)!;
+    editor.dispatch({ selection: { anchor: 0, head: editor.state.doc.length } });
+
+    dragTo(targetRow);
+    fireEvent.pointerDown(host.querySelector(".cm-content")!, { button: 0, pointerId: 4 });
+    fireEvent.pointerMove(area, { pointerId: 4, clientX: 20, clientY: 200 });
+    editor.dispatch({ selection: { anchor: 0, head: editor.state.doc.length } });
+    fireEvent.mouseMove(area, { buttons: 1, clientX: 20, clientY: 200 });
+
+    expect(editor.state.selection.main.empty).toBe(true);
+  });
+
   it("keeps the root ghost outside subtree-end spacing", () => {
     const { container } = renderOutline();
     const rootGhostRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
@@ -96,7 +117,7 @@ describe("NotebookPanel node range selection", () => {
     expect(container.querySelectorAll(".node-layout-box")).toHaveLength(
       container.querySelectorAll("[data-tree-row='true']").length,
     );
-    expect(rootNodeBlock.style.left).toBe("36px");
+    expect(rootNodeBlock.style.left).toBe("32px");
     expect(rootNodeBlock.style.right).toBe("8px");
     expect(treeList.style.getPropertyValue("--tree-layout-animation-duration")).toBe("100ms");
     expect(treeList.style.getPropertyValue("--tree-layout-animation-easing")).toBe("cubic-bezier(0.4, 0, 0.2, 1)");
