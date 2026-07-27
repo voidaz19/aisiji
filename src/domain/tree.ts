@@ -243,6 +243,10 @@ export function deleteSubtree(state: NotebookState, nodeId: string): NotebookSta
   return next;
 }
 
+export function deleteSubtrees(state: NotebookState, nodeIds: readonly string[]): NotebookState {
+  return nodeIds.reduce((next, nodeId) => deleteSubtree(next, nodeId), state);
+}
+
 export function restoreSubtree(state: NotebookState, nodeId: string): NotebookState {
   const node = state.nodes[nodeId];
   if (!node) return state;

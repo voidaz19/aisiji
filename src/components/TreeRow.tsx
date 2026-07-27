@@ -9,9 +9,13 @@ import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { ROOT_ID, type NodeRecord } from "../domain/model";
 
-interface Props { node: NodeRecord & { depth?: number }; }
+interface Props {
+  node: NodeRecord & { depth?: number };
+  selected?: boolean;
+  selectedKeys?: ReadonlySet<string>;
+}
 
-export function TreeRow({ node }: Props) {
+export function TreeRow({ node, selected = false, selectedKeys }: Props) {
   const nodes = useNotebookStore((state) => state.nodes);
   const collapsed = useNotebookStore((state) => state.collapsed[node.id]);
   const ghostSuppressed = useNotebookStore((state) => state.ghostSuppressed[node.id] === true);
@@ -29,9 +33,10 @@ export function TreeRow({ node }: Props) {
         ref={sortable.setNodeRef}
         data-tree-row="true"
         data-node-id={node.id}
+        data-selection-key={node.id}
         data-parent-id={node.parentId ?? ROOT_ID}
         data-depth={node.depth ?? 0}
-        className={`tree-row ${sortable.isDragging ? "is-dragging" : ""}`}
+        className={`tree-row ${selected ? "is-node-selected" : ""} ${sortable.isDragging ? "is-dragging" : ""}`}
         style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition, paddingLeft: `${16 + (node.depth ?? 0) * 28}px` }}
         {...sortable.attributes}
       >
@@ -58,12 +63,12 @@ export function TreeRow({ node }: Props) {
         </div>
         {node.kind !== "date" && <><label className="row-attachment" aria-label="添加附件"><Paperclip size={14} /><input type="file" accept="image/*,.pdf,.txt,.md,.doc,.docx,.zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void addAttachment(node.id, file); event.currentTarget.value = ""; }} /></label></>}
       </div>
-      {isExpanded && children.length === 0 && !ghostSuppressed && <GhostRow droppableId={`ghost:child:${node.id}`} parentId={node.id} depth={(node.depth ?? 0) + 1} />}
+      {isExpanded && children.length === 0 && !ghostSuppressed && <GhostRow droppableId={`ghost:child:${node.id}`} parentId={node.id} depth={(node.depth ?? 0) + 1} selected={selectedKeys?.has(`ghost:${node.id}`)} />}
     </>
   );
 }
 
-export function GhostRow({ droppableId, parentId, depth }: { droppableId: string; parentId: string; depth: number }) {
+export function GhostRow({ droppableId, parentId, depth, selected = false }: { droppableId: string; parentId: string; depth: number; selected?: boolean }) {
   const droppable = useDroppable({ id: droppableId });
   return (
     <div
@@ -71,8 +76,9 @@ export function GhostRow({ droppableId, parentId, depth }: { droppableId: string
       data-tree-row="true"
       data-depth={depth}
       data-ghost-row="true"
+      data-selection-key={`ghost:${parentId}`}
       data-parent-id={parentId}
-      className={`tree-row ghost-child ${droppable.isOver ? "is-over" : ""}`}
+      className={`tree-row ghost-child ${selected ? "is-node-selected" : ""} ${droppable.isOver ? "is-over" : ""}`}
       style={{ paddingLeft: `${16 + depth * 28}px` }}
     >
       <span className="collapse-button ghost-collapse" />

@@ -38,6 +38,7 @@ export interface NotebookStore extends NotebookState {
   moveFirstChild: (nodeId: string, parentId: string) => void;
   moveLastChild: (nodeId: string, parentId: string) => void;
   remove: (nodeId: string) => void;
+  removeNodes: (nodeIds: string[], focusKey?: string | null) => void;
   restore: (nodeId: string) => void;
   addField: (nodeId: string, key: string, type: FieldType, value: string) => void;
   updateField: (fieldId: string, value: string) => void;

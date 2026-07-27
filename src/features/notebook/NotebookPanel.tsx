@@ -17,6 +17,7 @@ import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { useHierarchyGuides } from "./hooks/useHierarchyGuides";
 import { useTreeLayoutAnimation } from "./hooks/useTreeLayoutAnimation";
+import { ghostSelectionKey, useNodeRangeSelection } from "./hooks/useNodeRangeSelection";
 
 interface Props {
   view: WorkspaceView;
@@ -29,6 +30,8 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes }: Props)
   const store = useNotebookStore();
   const [dragId, setDragId] = useState<string | null>(null);
   const treeListRef = useRef<HTMLDivElement>(null);
+  const contentAreaRef = useRef<HTMLDivElement>(null);
+  const nodeSelection = useNodeRangeSelection(contentAreaRef);
   const guideLines = useHierarchyGuides(
     treeListRef,
     view === "today" || view === "outline",
@@ -62,12 +65,19 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes }: Props)
   };
 
   return (
-    <div className="content-area">
+    <div ref={contentAreaRef} className={`content-area ${nodeSelection.selectedKeys.size ? "has-node-selection" : ""}`} {...nodeSelection.handlers}>
       <section className="content-header">
         <div>
           <p className="eyebrow">{eyebrow(view)}</p>
           {activeRoot?.kind === "content" && view !== "search" && view !== "trash" ? (
-            <div className="root-node-heading" data-node-id={activeRoot.id} role="heading" aria-level={1}>
+            <div
+              className={`root-node-heading ${nodeSelection.selectedKeys.has(activeRoot.id) ? "is-node-selected" : ""}`}
+              data-node-id={activeRoot.id}
+              data-selection-key={activeRoot.id}
+              data-depth={0}
+              role="heading"
+              aria-level={1}
+            >
               <InlineEditor nodeId={activeRoot.id} value={activeRoot.markdown} variant="root" />
             </div>
           ) : <h1>{heading(view, activeRoot)}</h1>}
@@ -99,8 +109,8 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes }: Props)
             })}
           </svg>
           {visibleNodes.length === 0 && view === "trash" && <EmptyState />}
-          {visibleNodes.map((node) => <TreeRow key={node.id} node={node as NodeRecord & { depth?: number }} />)}
-          {(view === "today" || view === "outline") && <GhostRow droppableId={`ghost:root:${rootId}`} parentId={rootId} depth={0} />}
+          {visibleNodes.map((node) => <TreeRow key={node.id} node={node as NodeRecord & { depth?: number }} selected={nodeSelection.selectedKeys.has(node.id)} selectedKeys={nodeSelection.selectedKeys} />)}
+          {(view === "today" || view === "outline") && <GhostRow droppableId={`ghost:root:${rootId}`} parentId={rootId} depth={0} selected={nodeSelection.selectedKeys.has(ghostSelectionKey(rootId))} />}
         </div>
         <DragOverlay>
           {dragId ? <div className="drag-preview"><span className="drag-preview-dot">••</span>{store.nodes[dragId]?.markdown || "未命名节点"}</div> : null}

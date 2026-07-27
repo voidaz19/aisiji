@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { createSeedState, ensureDateNode, indentNode, moveAfter, moveAsFirstChild, moveAsLastChild, moveBefore, outdentNode, updateMarkdown, deleteSubtree, restoreSubtree, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
+import { createSeedState, ensureDateNode, indentNode, moveAfter, moveAsFirstChild, moveAsLastChild, moveBefore, outdentNode, updateMarkdown, deleteSubtree, deleteSubtrees, restoreSubtree, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
 import { newId, ROOT_ID, type AttachmentRecord, type NodeField, type Operation, type NotebookState } from "../domain/model";
+import { selectedContentRoots } from "../domain/nodeSelection";
 import { storeAttachment } from "../platform/attachments";
 import { appendNativeOperation, loadNativeWorkspace, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
 import { localDateKey } from "../shared/date";
@@ -220,6 +221,44 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
         nextFocus ?? parentId,
         nextGhostParentId,
       );
+    },
+    removeNodes: (nodeIds, focusKey = null) => {
+      const state = get();
+      const roots = selectedContentRoots(state, nodeIds);
+      if (!roots.length) return;
+
+      const next = deleteSubtrees(state, roots);
+      commit(next, createOperation("delete_subtrees", roots[0], { nodeIds: roots }));
+
+      const activeRootRemoved = roots.some((rootId) => {
+        let currentId: string | null = state.activeRootId;
+        while (currentId) {
+          if (currentId === rootId) return true;
+          currentId = state.nodes[currentId]?.parentId ?? null;
+        }
+        return false;
+      });
+      if (activeRootRemoved) {
+        const parentId = state.nodes[roots[0]]?.parentId ?? ROOT_ID;
+        set({
+          activeRootId: parentId,
+          rootHistory: state.rootHistory.filter((id) => id !== state.activeRootId),
+        });
+      }
+
+      if (focusKey?.startsWith("ghost:")) {
+        set({ activeNodeId: null, activeNodeCursor: null, activeGhostParentId: focusKey.slice(6) });
+        return;
+      }
+      const focusNode = focusKey ? next.nodes[focusKey] : undefined;
+      if (focusNode && !focusNode.deletedAt && focusNode.kind === "content") {
+        set({ activeNodeId: focusNode.id, activeNodeCursor: 0, activeGhostParentId: null });
+      } else if (focusNode && !focusNode.deletedAt && focusNode.kind === "date") {
+        set({ activeNodeId: null, activeNodeCursor: null, activeGhostParentId: focusNode.id });
+      } else {
+        const parentId = state.nodes[roots[0]]?.parentId ?? ROOT_ID;
+        set({ activeNodeId: null, activeNodeCursor: null, activeGhostParentId: parentId });
+      }
     },
     restore: (nodeId) => commit(restoreSubtree(get(), nodeId), createOperation("restore_subtree", nodeId, {})),
     addField: (nodeId, key, type, value) => {
