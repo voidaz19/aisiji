@@ -1,5 +1,6 @@
 import { CalendarDays, Clock, FileText, Search } from "lucide-react";
 import type { NodeRecord } from "../../domain/model";
+import { recentPages, recentPageTitle } from "../../domain/recentPages";
 import { relativeTimeLabel } from "../../shared/date";
 import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
@@ -11,14 +12,12 @@ interface Props {
 
 export function DashboardPanel({ onNavigate, todayNode }: Props) {
   const nodes = useNotebookStore((state) => state.nodes);
+  const recentPageEdits = useNotebookStore((state) => state.recentPageEdits);
   const openRoot = useNotebookStore((state) => state.openRoot);
   const todayCount = todayNode
     ? Object.values(nodes).filter((node) => node.parentId === todayNode.id && !node.deletedAt).length
     : 0;
-  const recentNodes = Object.values(nodes)
-    .filter((node) => node.kind === "content" && !node.deletedAt && node.markdown.trim())
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 8);
+  const recent = recentPages({ nodes, recentPageEdits });
   const totalNodes = Object.values(nodes).filter(
     (node) => node.kind === "content" && !node.deletedAt,
   ).length;
@@ -50,13 +49,13 @@ export function DashboardPanel({ onNavigate, todayNode }: Props) {
       </div>
       <section className="dash-section">
         <h2 className="dash-section-title"><Clock size={15} />最近编辑</h2>
-        {recentNodes.length === 0 ? <p className="dash-empty">还没有任何内容节点。</p> : (
+        {recent.length === 0 ? <p className="dash-empty">还没有最近编辑的页面。</p> : (
           <ul className="dash-recent">
-            {recentNodes.map((node) => (
-              <li key={node.id}>
-                <button type="button" className="dash-recent-item" onClick={() => { onNavigate("outline"); openRoot(node.id); }}>
-                  <span className="dash-recent-text">{node.markdown.trim() || "未命名节点"}</span>
-                  <span className="dash-recent-time">{relativeTimeLabel(node.updatedAt)}</span>
+            {recent.map(({ page, editedAt }) => (
+              <li key={page.id}>
+                <button type="button" className="dash-recent-item" onClick={() => { onNavigate("outline"); openRoot(page.id); }}>
+                  <span className="dash-recent-text">{recentPageTitle(page)}</span>
+                  <span className="dash-recent-time">{relativeTimeLabel(editedAt)}</span>
                 </button>
               </li>
             ))}

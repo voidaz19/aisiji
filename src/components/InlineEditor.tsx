@@ -2,12 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { markdown } from "@codemirror/lang-markdown";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { planMultilinePaste } from "./editorClipboard";
 import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
-import { editorTheme, livePreview } from "./editorTheme";
+import { editorTheme } from "./editorTheme";
+import { createMarkdownEditorExtensions } from "./markdown/markdownEditor";
+import { atMarkdownVisualEnd, atMarkdownVisualStart } from "./markdown/markdownDecorations";
 
 interface Props {
   nodeId: string;
@@ -52,9 +53,8 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     const state = EditorState.create({
       doc: value,
       extensions: [
-        markdown(),
+        ...createMarkdownEditorExtensions(),
         history(),
-        livePreview,
         EditorView.lineWrapping,
         keymap.of([
           ...createEditorKeymap({
@@ -70,14 +70,14 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
             backspace: (editor) => {
               const pos = editor.state.selection.main.head;
               const hasSelection = !editor.state.selection.main.empty;
-              if (pos === 0 && !hasSelection) { mergeWithPrev(nodeId); return true; }
+              if (atMarkdownVisualStart(editor, pos) && !hasSelection) { mergeWithPrev(nodeId); return true; }
               return false;
             },
             delete: (editor) => {
               const docLen = editor.state.doc.length;
               const pos = editor.state.selection.main.head;
               const hasSelection = !editor.state.selection.main.empty;
-              if (pos === docLen && !hasSelection) { mergeWithNext(nodeId); return true; }
+              if ((pos === docLen || atMarkdownVisualEnd(editor, pos)) && !hasSelection) { mergeWithNext(nodeId); return true; }
               return false;
             },
             remove: () => { remove(nodeId); return true; },

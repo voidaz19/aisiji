@@ -248,6 +248,7 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .hierarchy-line-group:hover .hierarchy-line, .hierarchy-line-hit:focus-visible + .hierarchy-line { stroke: color-mix(in srgb, var(--ink-faint) 72%, transparent); stroke-width: 5; outline: none; }
 
 .tree-row { min-height: var(--tree-row-height); display: flex; align-items: flex-start; gap: 0; border-radius: var(--r-xs); position: relative; margin-bottom: var(--tree-row-gap); padding-right: var(--tree-row-right-padding); background: transparent; }
+.tree-row.has-link-menu { z-index: 20; }
 .tree-row.is-virtual-row { position: absolute; left: 0; }
 .tree-row.layout-gap-inside-subtree { margin-bottom: var(--tree-subtree-gap); }
 .tree-row.layout-gap-between-subtrees { margin-bottom: var(--tree-block-gap); }
@@ -352,6 +353,9 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .tree-row:hover .node-bullet.empty-node-bullet .node-dot,
 .tree-row:focus-within .node-bullet.empty-node-bullet .node-dot,
 .node-bullet.empty-node-bullet:focus .node-dot { opacity: .38; }
+/* A newly created blank node is focused immediately. Do not animate its dot
+   from the hidden empty state, which makes the row look as if it moved. */
+.tree-row:focus-within .node-bullet.empty-node-bullet .node-dot { transition: transform .22s ease; }
 .node-bullet:focus { outline: none; }
 .node-bullet:focus-visible { outline: 2px solid var(--leaf-soft); outline-offset: 2px; }
 .node-bullet.date-bullet { color: var(--leaf); }

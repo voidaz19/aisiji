@@ -1,52 +1,4 @@
-import { EditorState, StateField, RangeSetBuilder } from "@codemirror/state";
-import { EditorView, Decoration } from "@codemirror/view";
-
-export const livePreview = StateField.define({
-  create: (state) => decorate(state),
-  update: (decorations, transaction) => transaction.docChanged || transaction.selection ? decorate(transaction.state) : decorations,
-  provide: (field) => EditorView.decorations.from(field),
-});
-
-function decorate(state: EditorState) {
-  const builder = new RangeSetBuilder<Decoration>();
-  const text = state.doc.toString();
-  const cursor = state.selection.main.head;
-  const patterns: Array<[RegExp, string]> = [
-    [/\*\*([^*\n]+)\*\*/g, "cm-live-bold"],
-    [/~~([^~\n]+)~~/g, "cm-live-strike"],
-    [/==([^=\n]+)==/g, "cm-live-highlight"],
-    [/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "cm-live-italic"],
-  ];
-  const ranges: Array<{ from: number; to: number; decoration: Decoration }> = [];
-  for (const [pattern, className] of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const start = match.index ?? 0;
-      const contentStart = start + match[0].indexOf(match[1]);
-      const contentEnd = contentStart + match[1].length;
-      ranges.push({ from: contentStart, to: contentEnd, decoration: Decoration.mark({ class: className }) });
-      if (cursor < start || cursor > start + match[0].length) {
-        ranges.push({ from: start, to: contentStart, decoration: Decoration.replace({}) });
-        ranges.push({ from: contentEnd, to: start + match[0].length, decoration: Decoration.replace({}) });
-      }
-    }
-  }
-  let offset = 0;
-  for (const line of text.split("\n")) {
-    const start = offset;
-    const end = start + line.length;
-    if (/^#{1,3}\s/.test(line)) ranges.push({ from: start, to: end, decoration: Decoration.mark({ class: "cm-live-heading" }) });
-    if (/^\s*\[[ xX]\]\s/.test(line)) ranges.push({ from: start, to: end, decoration: Decoration.mark({ class: "cm-live-task" }) });
-    offset = end + 1;
-  }
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to);
-  let lastEnd = -1;
-  for (const range of ranges) {
-    if (range.from < lastEnd || range.from === range.to) continue;
-    builder.add(range.from, range.to, range.decoration);
-    lastEnd = range.to;
-  }
-  return builder.finish();
-}
+import { EditorView } from "@codemirror/view";
 
 export const editorTheme = EditorView.theme({
   "&": { backgroundColor: "transparent", fontFamily: "inherit", fontSize: "var(--tree-content-font-size)", lineHeight: "var(--tree-content-line-height)", outline: "none", border: "0" },
@@ -57,9 +9,40 @@ export const editorTheme = EditorView.theme({
   ".cm-gutters": { display: "none" },
   ".cm-selectionBackground, ::selection": { backgroundColor: "#dbe0ff" },
   ".cm-live-bold": { fontWeight: "650" },
-  ".cm-live-italic": { fontStyle: "italic" },
+  ".cm-live-italic": { fontStyle: "italic", fontSynthesis: "style" },
   ".cm-live-strike": { textDecoration: "line-through", color: "#9ca3af" },
   ".cm-live-highlight": { backgroundColor: "#fef3c7", borderRadius: "3px" },
-  ".cm-live-heading": { fontWeight: "700", fontSize: "1.12em" },
-  ".cm-live-task": { color: "#6b7280" },
+  ".cm-live-code": { fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: "0.92em", backgroundColor: "#f3f4f6", borderRadius: "3px", padding: "1px 3px" },
+  ".cm-live-heading": { fontWeight: "700" },
+  ".cm-live-heading-1": { fontSize: "1.18em" },
+  ".cm-live-heading-2": { fontSize: "1.12em" },
+  ".cm-live-heading-3": { fontSize: "1.06em" },
+  ".cm-live-heading-4": { fontSize: "1.02em" },
+  ".cm-live-heading-5": { fontSize: "0.98em", color: "#374151" },
+  ".cm-live-heading-6": { fontSize: "0.94em", color: "#4b5563" },
+  ".cm-live-quote": { color: "#4b5563", borderLeft: "3px solid #c7ccd6", paddingLeft: "8px" },
+  ".cm-live-task": { color: "#4b5563" },
+  ".cm-live-task.is-checked": { color: "#9ca3af", textDecoration: "line-through" },
+  ".cm-live-task-checkbox": { width: "14px", height: "14px", margin: "0 6px 0 0", verticalAlign: "-2px", accentColor: "#4f46e5", cursor: "pointer" },
+  ".cm-live-external-link": { display: "inline-block", position: "relative", pointerEvents: "auto" },
+  ".cm-live-link": { appearance: "none", border: "0", padding: "0", margin: "0", background: "transparent", color: "#235ea7", font: "inherit", lineHeight: "inherit", textDecoration: "underline", textDecorationColor: "#9bb9dc", textUnderlineOffset: "2px", cursor: "pointer" },
+  ".cm-live-link-menu": { display: "flex", position: "absolute", isolation: "isolate", zIndex: "100", top: "calc(100% + 5px)", left: "0", minWidth: "112px", padding: "4px", gap: "2px", border: "1px solid #c9d0da", borderRadius: "6px", backgroundColor: "#ffffff", boxShadow: "0 8px 24px rgba(17, 24, 39, 0.18)", color: "#191919", opacity: "1", pointerEvents: "auto" },
+  ".cm-live-link-menu-item": { appearance: "none", flex: "1 1 auto", border: "0", borderRadius: "4px", padding: "5px 8px", background: "transparent", color: "#25272b", font: "inherit", fontSize: "12px", lineHeight: "18px", cursor: "pointer" },
+  ".cm-live-link-menu-item:hover": { background: "#f2f4f7" },
+  ".cm-live-link-form": { display: "grid", width: "260px", gap: "8px", padding: "4px", backgroundColor: "#ffffff", opacity: "1", pointerEvents: "auto" },
+  ".cm-live-link-form label": { display: "grid", gap: "3px", color: "#5c626d", fontSize: "11px", lineHeight: "16px" },
+  ".cm-live-link-form input": { width: "100%", boxSizing: "border-box", border: "1px solid #cfd5df", borderRadius: "4px", padding: "5px 7px", background: "#ffffff", color: "#191919", font: "inherit", fontSize: "12px", lineHeight: "18px", outline: "none" },
+  ".cm-live-link-form input:focus": { borderColor: "#6f7bd9", boxShadow: "0 0 0 2px rgba(79, 70, 229, 0.12)" },
+  ".cm-live-link-form-error": { minHeight: "16px", color: "#b42318", fontSize: "11px", lineHeight: "16px" },
+  ".cm-live-link-form-actions": { display: "flex", justifyContent: "flex-end", gap: "6px" },
+  ".cm-live-link-form-actions button": { appearance: "none", border: "1px solid #cfd5df", borderRadius: "4px", padding: "4px 9px", background: "#ffffff", color: "#25272b", font: "inherit", fontSize: "12px", lineHeight: "18px", cursor: "pointer" },
+  ".cm-live-link-form-actions button.is-primary": { borderColor: "#4f46e5", background: "#4f46e5", color: "#ffffff" },
+  ".cm-live-node-link, .cm-live-attachment": { appearance: "none", border: "0", padding: "0", margin: "0", background: "transparent", color: "#235ea7", font: "inherit", lineHeight: "inherit", textDecoration: "underline", textDecorationColor: "#9bb9dc", textUnderlineOffset: "2px", cursor: "pointer" },
+  ".cm-live-node-link.is-missing, .cm-live-attachment.is-missing": { color: "#9ca3af", textDecorationStyle: "dotted", cursor: "default" },
+  ".cm-live-image-preview": { appearance: "none", display: "inline-flex", width: "min(420px, 100%)", aspectRatio: "16 / 9", alignItems: "center", justifyContent: "center", position: "relative", verticalAlign: "top", overflow: "hidden", padding: "0", margin: "4px 0", border: "1px solid #d7dce4", borderRadius: "6px", background: "#f7f8fa", color: "#6b7280", cursor: "pointer" },
+  ".cm-live-image-preview img": { display: "block", width: "100%", height: "100%", objectFit: "contain" },
+  ".cm-live-image-caption": { position: "absolute", left: "8px", right: "8px", bottom: "6px", overflow: "hidden", color: "#ffffff", fontSize: "12px", lineHeight: "18px", textOverflow: "ellipsis", whiteSpace: "nowrap", textShadow: "0 1px 3px #000000", pointerEvents: "none" },
+  ".cm-live-image-preview.is-missing, .cm-live-image-preview.is-error": { cursor: "default", borderStyle: "dashed" },
+  ".cm-live-image-preview.is-error img": { display: "none" },
+  ".cm-live-horizontal-rule": { display: "inline-block", width: "100%", height: "20px", boxSizing: "border-box", borderTop: "1px solid #cfd5df", transform: "translateY(10px)", color: "transparent", cursor: "text" },
 });

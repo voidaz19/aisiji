@@ -44,6 +44,8 @@ export interface NotebookState {
   fields: Record<string, NodeField>;
   attachments: Record<string, AttachmentRecord>;
   collapsed: Record<string, boolean>;
+  /** Last edit time keyed by the page (active root) where the edit occurred. */
+  recentPageEdits: Record<string, number>;
 }
 
 export interface Operation {
@@ -76,7 +78,7 @@ export function createEmptyState(): NotebookState {
     createdAt: 0,
     updatedAt: 0,
   };
-  return { nodes: { [ROOT_ID]: rootNode }, fields: {}, attachments: {}, collapsed: {} };
+  return { nodes: { [ROOT_ID]: rootNode }, fields: {}, attachments: {}, collapsed: {}, recentPageEdits: {} };
 }
 
 export function cloneState(state: NotebookState): NotebookState {
@@ -85,5 +87,6 @@ export function cloneState(state: NotebookState): NotebookState {
     fields: { ...state.fields },
     attachments: { ...state.attachments },
     collapsed: { ...state.collapsed },
+    recentPageEdits: { ...state.recentPageEdits },
   };
 }

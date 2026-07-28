@@ -137,6 +137,12 @@ export function useNodeRangeSelection(
         }
         return;
       }
+      if (!event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && isArrowKey(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        clear(selection.headKey);
+        return;
+      }
       if (event.key.length === 1 || event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         event.stopPropagation();
@@ -147,16 +153,42 @@ export function useNodeRangeSelection(
     if (!selection && event.shiftKey && isArrowKey(event.key)) {
       const row = closestSelectionRow(event.target);
       const editor = editorFromTarget(event.target);
-      if (!row || !editor || !movesPastEditorBoundary(editor, event.key)) return;
+      if (!row || !editor) return;
+      const atBoundary = event.key === "ArrowUp" || event.key === "ArrowDown"
+        ? selectionHeadAtEditorBoundary(editor, event.key)
+        : movesPastEditorBoundary(editor, event.key);
+      if (!atBoundary) return;
       const currentKey = row.dataset.selectionKey;
-      const currentIndex = currentKey ? currentOrder.indexOf(currentKey) : -1;
-      const delta = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1;
-      const nextKey = currentOrder[currentIndex + delta];
-      if (!currentKey || !nextKey) return;
+      if (!currentKey) return;
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        const currentIndex = currentOrder.indexOf(currentKey);
+        const delta = event.key === "ArrowLeft" ? -1 : 1;
+        const nextKey = currentOrder[currentIndex + delta];
+        if (!nextKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        clearEditorSelections(containerRef.current);
+        setSelection({ anchorKey: currentKey, headKey: nextKey });
+        return;
+      }
+
       event.preventDefault();
       event.stopPropagation();
+
+      // CodeMirror owns text selection until its head reaches the vertical
+      // boundary. Continuing past that boundary promotes it to the current
+      // node; later Shift+Arrow presses can then extend to adjacent nodes.
+      if (editor.state.selection.main.empty && editor.state.doc.length > 0) {
+        const forward = event.key === "ArrowDown";
+        editor.dispatch({
+          selection: { anchor: forward ? 0 : editor.state.doc.length, head: forward ? editor.state.doc.length : 0 },
+          userEvent: "select",
+        });
+        return;
+      }
       clearEditorSelections(containerRef.current);
-      setSelection({ anchorKey: currentKey, headKey: nextKey });
+      setSelection({ anchorKey: currentKey, headKey: currentKey });
     }
   }, [clear, containerRef, entries, removeNodes, selection]);
 
@@ -284,6 +316,11 @@ function movesPastEditorBoundary(editor: EditorView, key: string): boolean {
   return visualBoundary.head === (forward ? editor.state.doc.length : 0);
 }
 
+function selectionHeadAtEditorBoundary(editor: EditorView, key: "ArrowUp" | "ArrowDown"): boolean {
+  const head = editor.state.selection.main.head;
+  return head === (key === "ArrowDown" ? editor.state.doc.length : 0);
+}
+
 function deletionFallback(order: readonly string[], selected: readonly string[]): string | null {
   if (!selected.length) return null;
   const selectedSet = new Set(selected);
@@ -295,11 +332,17 @@ function deletionFallback(order: readonly string[], selected: readonly string[])
   for (let index = firstIndex - 1; index >= 0; index -= 1) {
     if (!selectedSet.has(order[index])) return order[index];
   }
-  return null;
+  // Placeholder rows are transient selection targets, not deleted data. When
+  // the entire page is selected, keep the final (page-level) ghost as the
+  // focus destination so the user can continue typing immediately.
+  return [...selected].reverse().find((key) => key.startsWith(GHOST_PREFIX)) ?? null;
 }
 
 function focusSelectionKey(container: HTMLElement | null, key: string): void {
-  const row = container?.querySelector<HTMLElement>(`[data-selection-key="${CSS.escape(key)}"]`);
+  const row = container
+    ? Array.from(container.querySelectorAll<HTMLElement>("[data-selection-key]"))
+        .find((candidate) => candidate.dataset.selectionKey === key)
+    : undefined;
   const host = row?.querySelector<HTMLElement>(".inline-editor");
   const editor = host ? EditorView.findFromDOM(host) : null;
   if (editor) {

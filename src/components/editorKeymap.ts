@@ -1,5 +1,18 @@
 import type { EditorView, KeyBinding } from "@codemirror/view";
 import { redo } from "@codemirror/commands";
+import {
+  toggleBold,
+  toggleHighlight,
+  toggleInlineCode,
+  toggleItalic,
+  toggleStrikethrough,
+} from "./markdown/markdownCommands";
+import {
+  deleteVisibleBackward,
+  deleteVisibleForward,
+  moveAcrossVisibleComponentBackward,
+  moveAcrossVisibleComponentForward,
+} from "./markdown/markdownVisibleEditing";
 
 export interface EditorKeymapActions {
   enter: (editor: EditorView) => boolean;
@@ -19,9 +32,18 @@ export function createEditorKeymap(actions: EditorKeymapActions): KeyBinding[] {
     { key: "Tab", run: actions.indent },
     { key: "Shift-Tab", run: actions.outdent },
     { key: "Backspace", run: actions.backspace },
+    { key: "Backspace", run: deleteVisibleBackward },
     { key: "Delete", run: actions.delete },
+    { key: "Delete", run: deleteVisibleForward },
+    { key: "ArrowLeft", run: moveAcrossVisibleComponentBackward },
+    { key: "ArrowRight", run: moveAcrossVisibleComponentForward },
     { key: "Mod-Shift-Backspace", run: actions.remove },
     { key: "Mod-Delete", run: actions.remove },
     { key: "Mod-Shift-z", run: redo, preventDefault: true },
+    { key: "Mod-b", run: toggleBold, preventDefault: true },
+    { key: "Mod-i", run: toggleItalic, preventDefault: true },
+    { key: "Mod-Shift-x", run: toggleStrikethrough, preventDefault: true },
+    { key: "Mod-Shift-h", run: toggleHighlight, preventDefault: true },
+    { key: "Mod-`", run: toggleInlineCode, preventDefault: true },
   ];
 }

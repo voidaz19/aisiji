@@ -36,9 +36,12 @@ export function purgeDeletedNodes(state: NotebookState): PurgeDeletedNodesResult
   const collapsed = Object.fromEntries(
     Object.entries(state.collapsed).filter(([nodeId]) => !purgedNodeIdSet.has(nodeId)),
   );
+  const recentPageEdits = Object.fromEntries(
+    Object.entries(state.recentPageEdits).filter(([pageId]) => !purgedNodeIdSet.has(pageId)),
+  );
 
   return {
-    state: { nodes, fields, attachments, collapsed },
+    state: { nodes, fields, attachments, collapsed, recentPageEdits },
     purgedNodeIds,
     purgedAttachmentIds,
   };

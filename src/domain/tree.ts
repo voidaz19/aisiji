@@ -119,7 +119,7 @@ export function createNode(
   kind: "content" | "date" = "content",
   dateKey: string | null = null,
   afterId?: string | null,
-  options: { nodeId?: string; now?: number } = {},
+  options: { nodeId?: string; now?: number; beforeId?: string | null } = {},
 ): { state: NotebookState; node: NodeRecord } {
   const next = cloneState(state);
   const now = options.now ?? Date.now();
@@ -131,9 +131,14 @@ export function createNode(
   // By default a new node is appended after the last sibling. When afterId
   // names a specific sibling (e.g. pressing Enter on that node), the new
   // node is inserted right after it instead of always landing at the end.
+  const beforeIndex = options.beforeId ? siblings.findIndex((sibling) => sibling.id === options.beforeId) : -1;
   const afterIndex = afterId ? siblings.findIndex((sibling) => sibling.id === afterId) : -1;
-  const before = afterIndex >= 0 ? siblings[afterIndex] : siblings[siblings.length - 1];
-  const after = afterIndex >= 0 ? siblings[afterIndex + 1] : undefined;
+  const before = beforeIndex >= 0
+    ? siblings[beforeIndex - 1]
+    : afterIndex >= 0 ? siblings[afterIndex] : siblings[siblings.length - 1];
+  const after = beforeIndex >= 0
+    ? siblings[beforeIndex]
+    : afterIndex >= 0 ? siblings[afterIndex + 1] : undefined;
   const node: NodeRecord = {
     id: options.nodeId ?? newId(kind),
     kind,

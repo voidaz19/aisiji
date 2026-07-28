@@ -112,6 +112,42 @@ describe("InlineEditor", () => {
     await waitFor(() => expect(useNotebookStore.getState().nodes[node.id].markdown).toBe("startX"));
   });
 
+  it("applies and removes Markdown formatting with editor shortcuts", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "format me");
+    const { getByLabelText } = render(<StoreEditor nodeId={node.id} />);
+    const host = getByLabelText("节点内容");
+    const content = host.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(host)!;
+
+    editor.dispatch({ selection: { anchor: 0, head: 6 } });
+    fireEvent.keyDown(content, { key: "b", code: "KeyB", ctrlKey: true });
+    expect(useNotebookStore.getState().nodes[node.id].markdown).toBe("**format** me");
+
+    fireEvent.keyDown(content, { key: "b", code: "KeyB", ctrlKey: true });
+    expect(useNotebookStore.getState().nodes[node.id].markdown).toBe("format me");
+  });
+
+  it("toggles the current node Markdown source with Mod-Shift-M", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "prefix **format**");
+    const { getByLabelText } = render(<StoreEditor nodeId={node.id} />);
+    const host = getByLabelText("节点内容");
+    const content = host.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(host)!;
+
+    editor.dispatch({ selection: { anchor: 0 } });
+    expect(content.textContent).toBe("prefix format");
+
+    fireEvent.keyDown(content, { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true });
+    expect(content.textContent).toBe("prefix **format**");
+
+    fireEvent.keyDown(content, { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true });
+    expect(content.textContent).toBe("prefix format");
+  });
+
   it("moves horizontally across adjacent node boundaries", async () => {
     const first = firstContentNode();
     useNotebookStore.getState().editMarkdown(first.id, "first");
@@ -139,6 +175,55 @@ describe("InlineEditor", () => {
 
     await waitFor(() => expect(useNotebookStore.getState().activeNodeId).toBe(first.id));
     expect(editors[0].state.selection.main.head).toBe(editors[0].state.doc.length);
+  });
+
+  it("crosses an atomic link before moving to the next node", async () => {
+    const first = firstContentNode();
+    useNotebookStore.getState().editMarkdown(first.id, "[站点](https://example.com)");
+    const secondId = useNotebookStore.getState().createSibling(first.id, "next")!;
+    const { getAllByLabelText } = render(
+      <>
+        <StoreEditor nodeId={first.id} />
+        <StoreEditor nodeId={secondId} />
+      </>,
+    );
+    const hosts = getAllByLabelText("节点内容");
+    const editors = hosts.map((host) => EditorView.findFromDOM(host)!);
+    const contents = hosts.map((host) => host.querySelector<HTMLElement>(".cm-content")!);
+
+    act(() => {
+      editors[0].dispatch({ selection: { anchor: 0 } });
+      editors[0].focus();
+    });
+    fireEvent.keyDown(contents[0], { key: "ArrowRight", code: "ArrowRight" });
+    expect(editors[0].state.selection.main.head).toBe(editors[0].state.doc.length);
+    expect(useNotebookStore.getState().activeNodeId).toBe(first.id);
+
+    fireEvent.keyDown(contents[0], { key: "ArrowRight", code: "ArrowRight" });
+
+    await waitFor(() => expect(useNotebookStore.getState().activeNodeId).toBe(secondId));
+    expect(editors[1].state.selection.main.head).toBe(0);
+  });
+
+  it("deletes an only atomic link before considering a merge with the previous node", () => {
+    const previous = firstContentNode();
+    useNotebookStore.getState().editMarkdown(previous.id, "previous");
+    const linkId = useNotebookStore.getState().createSibling(previous.id, "[站点](https://example.com)")!;
+    const { getByLabelText } = render(<StoreEditor nodeId={linkId} />);
+    const host = getByLabelText("节点内容");
+    const content = host.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(host)!;
+
+    act(() => {
+      editor.dispatch({ selection: { anchor: editor.state.doc.length } });
+      editor.focus();
+    });
+    fireEvent.keyDown(content, { key: "Backspace", code: "Backspace" });
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[previous.id].markdown).toBe("previous");
+    expect(state.nodes[linkId].markdown).toBe("");
+    expect(childrenOf(state, previous.parentId!).map((node) => node.id)).toContain(linkId);
   });
 
   it("moves focus to an adjacent virtualized node that is not mounted", async () => {

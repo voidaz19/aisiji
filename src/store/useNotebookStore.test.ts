@@ -69,9 +69,39 @@ describe("splitNode (Enter in the middle of content)", () => {
     expect(state.collapsed[node.id]).toBe(true);
     expect(childrenOf(state, node.parentId!).map((child) => child.id)).toContain(newId);
   });
+
+  it("creates a blank sibling above an expanded parent when Enter is pressed at its start", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "parent");
+    const childId = store.createChild(node.id, "child")!;
+    const newId = store.splitNode(node.id, "", "parent")!;
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[newId].markdown).toBe("");
+    expect(state.nodes[newId].parentId).toBe(node.parentId);
+    expect(state.nodes[node.id].markdown).toBe("parent");
+    expect(state.nodes[childId].parentId).toBe(node.id);
+    expect(childrenOf(state, node.parentId!).map((child) => child.id)).toEqual([newId, node.id]);
+    expect(state.activeNodeId).toBe(newId);
+  });
 });
 
 describe("editing a content node as the active root", () => {
+  it("records the active page instead of the edited descendant", () => {
+    const store = useNotebookStore.getState();
+    const page = firstContentNode();
+    store.editMarkdown(page.id, "page");
+    store.enterNode(page.id);
+    const childId = store.createChild(page.id, "child")!;
+    store.editMarkdown(childId, "edited child");
+
+    const state = useNotebookStore.getState();
+    expect(state.recentPageEdits[page.id]).toBeTypeOf("number");
+    expect(state.recentPageEdits[childId]).toBeUndefined();
+    expect(state.pendingOperations[state.pendingOperations.length - 1]?.payload.pageId).toBe(page.id);
+  });
+
   it("focuses the content editor when entering a content node", () => {
     const store = useNotebookStore.getState();
     const node = firstContentNode();

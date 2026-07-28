@@ -1,7 +1,7 @@
 import type { NotebookState } from "../model";
 import { createNode, moveAsFirstChild, updateMarkdown } from "../tree";
 
-export type SplitPlacement = "after" | "first-child";
+export type SplitPlacement = "before" | "after" | "first-child";
 
 export interface SplitNodeCommand {
   nodeId: string;
@@ -28,6 +28,15 @@ export function executeSplitNode(state: NotebookState, command: SplitNodeCommand
     ? command.nodeId
     : current.parentId;
   if (!parentId) return { status: "rejected", state, reason: "node-not-found" };
+
+  if (command.placement === "before") {
+    const created = createNode(state, parentId, "", "content", null, null, {
+      beforeId: command.nodeId,
+      nodeId: command.newNodeId,
+      now: command.now,
+    });
+    return { status: "applied", state: created.state, newNodeId: created.node.id };
+  }
 
   let next = updateMarkdown(state, command.nodeId, command.before, command.now);
   const created = createNode(

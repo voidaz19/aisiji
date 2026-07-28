@@ -32,6 +32,28 @@ describe("node domain commands", () => {
     expect(childrenOf(state, ROOT_ID).map((node) => node.id)).toEqual(["first", "second"]);
   });
 
+  it("creates an empty sibling before a node without changing its content or subtree", () => {
+    let state = addNode(createEmptyState(), "before-target", ROOT_ID, "parent");
+    state = addNode(state, "child", "before-target", "child");
+    state = addNode(state, "after-target", ROOT_ID, "after");
+
+    const result = executeSplitNode(state, {
+      nodeId: "before-target",
+      before: "",
+      after: "parent",
+      placement: "before",
+      newNodeId: "new-before",
+      now: 10,
+    });
+
+    expect(result.status).toBe("applied");
+    if (result.status !== "applied") return;
+    expect(result.state.nodes["new-before"].markdown).toBe("");
+    expect(result.state.nodes["before-target"].markdown).toBe("parent");
+    expect(result.state.nodes.child.parentId).toBe("before-target");
+    expect(childrenOf(result.state, ROOT_ID).map((node) => node.id)).toEqual(["new-before", "before-target", "after-target"]);
+  });
+
   it("puts the split tail before existing children when the node is expanded", () => {
     let state = addNode(createEmptyState(), "parent", ROOT_ID, "parent");
     state = addNode(state, "existing-child", "parent", "child");

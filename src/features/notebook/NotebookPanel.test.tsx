@@ -1,10 +1,11 @@
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
 import { visibleNodes } from "../../domain/tree";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { NotebookPanel } from "./NotebookPanel";
+import { visibleNodesForView } from "./model/notebookView";
 
 beforeEach(() => {
   localStorage.clear();
@@ -26,6 +27,19 @@ function renderOutline(layoutDebug = false) {
       visibleNodes={visibleNodes(state, ROOT_ID)}
       layoutDebug={layoutDebug}
     />,
+  );
+}
+
+function ReactiveOutline() {
+  const nodes = useNotebookStore((state) => state.nodes);
+  const collapsed = useNotebookStore((state) => state.collapsed);
+  return (
+    <NotebookPanel
+      view="outline"
+      activeRoot={null}
+      rootId={ROOT_ID}
+      visibleNodes={visibleNodesForView({ nodes, collapsed }, "outline", ROOT_ID, "")}
+    />
   );
 }
 
@@ -217,6 +231,73 @@ describe("NotebookPanel node range selection", () => {
     expect(editor.state.selection.main.empty).toBe(true);
   });
 
+  it("clears a multi-node selection with an unmodified arrow key", () => {
+    const state = useNotebookStore.getState();
+    const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    const { container } = renderOutline();
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const targetRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    dragTo(targetRow);
+
+    fireEvent.pointerDown(sourceRow.querySelector(".node-content")!, { button: 0, pointerId: 5 });
+    fireEvent.pointerMove(area, { pointerId: 5, clientX: 20, clientY: 200 });
+    expect(container.querySelectorAll(".is-node-selected").length).toBeGreaterThan(1);
+
+    fireEvent.keyDown(area, { key: "ArrowDown", code: "ArrowDown" });
+
+    expect(container.querySelectorAll(".is-node-selected")).toHaveLength(0);
+  });
+
+  it.each([
+    { key: "ArrowDown", source: "first", target: "second" },
+    { key: "ArrowUp", source: "second", target: "first" },
+  ] as const)("promotes a $key text selection at its boundary before extending to adjacent nodes", async ({ key, source, target }) => {
+    const store = useNotebookStore.getState();
+    const first = Object.values(store.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    store.editMarkdown(first.id, "first node");
+    const secondId = store.createSibling(first.id, "second node")!;
+    const { container } = renderOutline();
+    const sourceId = source === "first" ? first.id : secondId;
+    const targetId = target === "first" ? first.id : secondId;
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${sourceId}"]`)!;
+    const sourceEditor = EditorView.findFromDOM(sourceRow.querySelector<HTMLElement>(".inline-editor")!)!;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    sourceEditor.dispatch({
+      selection: key === "ArrowDown"
+        ? { anchor: 0, head: sourceEditor.state.doc.length }
+        : { anchor: sourceEditor.state.doc.length, head: 0 },
+    });
+    sourceEditor.focus();
+
+    fireEvent.keyDown(content, { key, code: key, shiftKey: true });
+    expect(sourceEditor.state.selection.main.empty).toBe(true);
+    expect(sourceRow.classList.contains("is-node-selected")).toBe(true);
+
+    fireEvent.keyDown(content, { key, code: key, shiftKey: true });
+    await waitFor(() => expect(
+      container.querySelector<HTMLElement>(`[data-selection-key="${targetId}"]`)?.classList.contains("is-node-selected"),
+    ).toBe(true));
+    expect(sourceRow.classList.contains("is-node-selected")).toBe(true);
+  });
+
+  it.each(["ArrowUp", "ArrowDown"] as const)("keeps Shift+%s inside text when the caret has not reached the node boundary", (key) => {
+    const store = useNotebookStore.getState();
+    const node = Object.values(store.nodes).find((candidate) => candidate.kind === "content" && !candidate.deletedAt)!;
+    store.editMarkdown(node.id, "middle text");
+    const { container } = renderOutline();
+    const row = container.querySelector<HTMLElement>(`[data-selection-key="${node.id}"]`)!;
+    const editor = EditorView.findFromDOM(row.querySelector<HTMLElement>(".inline-editor")!)!;
+    const content = row.querySelector<HTMLElement>(".cm-content")!;
+    editor.dispatch({ selection: { anchor: 6 } });
+    editor.focus();
+
+    fireEvent.keyDown(content, { key, code: key, shiftKey: true });
+
+    expect(row.classList.contains("is-node-selected")).toBe(false);
+    expect(editor.state.selection.main.empty).toBe(false);
+  });
+
   it("keeps the root ghost outside subtree-end spacing", () => {
     const { container } = renderOutline();
     const rootGhostRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
@@ -372,5 +453,25 @@ describe("NotebookPanel node range selection", () => {
 
     expect(useNotebookStore.getState().nodes[date.id].deletedAt).toBeNull();
     expect(useNotebookStore.getState().nodes[content.id].deletedAt).not.toBeNull();
+  });
+
+  it("focuses the page ghost after deleting every node on the current page", async () => {
+    const state = useNotebookStore.getState();
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const { container } = render(<ReactiveOutline />);
+    const dateRow = container.querySelector<HTMLElement>(`[data-selection-key="${date.id}"]`)!;
+    const rootGhostRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    dragTo(rootGhostRow);
+
+    fireEvent.pointerDown(dateRow.querySelector(".date-content")!, { button: 0, pointerId: 3 });
+    fireEvent.pointerMove(area, { pointerId: 3, clientX: 20, clientY: 200 });
+    fireEvent.keyDown(area, { key: "Delete" });
+
+    await waitFor(() => {
+      const ghost = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"] .ghost-editor`);
+      expect(ghost?.querySelector(".cm-focused")).not.toBeNull();
+    });
+    expect(useNotebookStore.getState().activeGhostParentId).toBe(ROOT_ID);
   });
 });

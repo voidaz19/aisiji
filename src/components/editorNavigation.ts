@@ -1,5 +1,6 @@
 import { EditorView, type KeyBinding } from "@codemirror/view";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { atMarkdownVisualEnd, atMarkdownVisualStart } from "./markdown/markdownDecorations";
 
 type NavigationDirection = "left" | "right" | "up" | "down";
 
@@ -15,8 +16,8 @@ function moveAcrossNodeBoundary(view: EditorView, direction: NavigationDirection
   if (!selection.empty) return false;
 
   const forward = direction === "right" || direction === "down";
-  if (direction === "left" && selection.head !== 0) return false;
-  if (direction === "right" && selection.head !== view.state.doc.length) return false;
+  if (direction === "left" && !atMarkdownVisualStart(view, selection.head)) return false;
+  if (direction === "right" && !atMarkdownVisualEnd(view, selection.head)) return false;
 
   if (direction === "up" || direction === "down") {
     const visualLineBoundary = view.moveToLineBoundary(selection, forward, true);

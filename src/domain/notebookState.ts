@@ -7,6 +7,7 @@ export function normalizeNotebookState(state: Partial<NotebookState>): NotebookS
     fields: state.fields ?? {},
     attachments: state.attachments ?? {},
     collapsed: state.collapsed ?? {},
+    recentPageEdits: state.recentPageEdits ?? {},
   };
 }
 
@@ -21,8 +22,9 @@ export function selectHydrationWorkspace(
 }
 
 function workspaceVersion(state: NotebookState): number {
-  return Object.values(state.nodes).reduce(
+  const nodeVersion = Object.values(state.nodes).reduce(
     (latest, node) => Math.max(latest, node.updatedAt, node.deletedAt ?? 0),
     0,
   );
+  return Math.max(nodeVersion, ...Object.values(state.recentPageEdits));
 }

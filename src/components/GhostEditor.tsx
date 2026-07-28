@@ -2,13 +2,13 @@ import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { markdown } from "@codemirror/lang-markdown";
 import { childrenOf, lastVisibleNodeInSubtree } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { planMultilinePaste } from "./editorClipboard";
 import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
-import { editorTheme, livePreview } from "./editorTheme";
+import { editorTheme } from "./editorTheme";
+import { createMarkdownEditorExtensions } from "./markdown/markdownEditor";
 
 interface Props {
   /** Parent the eventual real node should be created under. */
@@ -60,9 +60,8 @@ export function GhostEditor({ parentId }: Props) {
     const state = EditorState.create({
       doc: "",
       extensions: [
-        markdown(),
+        ...createMarkdownEditorExtensions(),
         history(),
-        livePreview,
         EditorView.lineWrapping,
         keymap.of([
           ...createEditorKeymap({

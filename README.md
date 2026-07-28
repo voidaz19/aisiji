@@ -6,8 +6,8 @@
 
 - 全局树形大纲、日期节点和今天入口
 - 节点进入、折叠、键盘缩进/提升、整棵子树拖拽
-- 单区 Markdown Live Preview：标题、待办、粗体、斜体、删除线和高亮
-- 节点链接语法 `[[node:<id>]]` 的渲染基础
+- 语法树驱动的 Markdown Live Preview：H1-H6、引用、待办、粗体、斜体、删除线、高亮、行内代码和分隔线
+- 普通链接、节点链接、图片与已登记附件预览；Markdown 控制符按需显形、当前节点源码模式和常用格式快捷键
 - 字段模型（文本、数字、日期、布尔值和节点链接）
 - 回收站、操作日志、本地 SQLite 命令和系统密钥环命令
 - 坚果云 WebDAV 探测、列表、上传、下载和不可变操作块协议
@@ -22,7 +22,7 @@ npm run dev -- --host localhost --port 4173
 
 浏览器预览地址：`http://localhost:4173/`
 
-项目按功能模块和平台适配器分层。新增功能或调整目录前，请先阅读 [项目架构](docs/ARCHITECTURE.md)。
+项目按功能模块和平台适配器分层。新增功能或调整目录前，请先阅读 [项目架构](docs/ARCHITECTURE.md)；Markdown 支持边界见 [Markdown 编辑规范](docs/MARKDOWN_SPEC.md)。
 
 运行 Windows Tauri 开发版：
 

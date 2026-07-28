@@ -5,6 +5,7 @@ import { executeSplitNode } from "../domain/commands/splitNode";
 import { createSeedState, ensureDateNode, updateMarkdown, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
 import { newId, ROOT_ID, type AttachmentRecord, type NodeField, type Operation, type NotebookState } from "../domain/model";
 import { selectHydrationWorkspace } from "../domain/notebookState";
+import { contentNodesChanged } from "../domain/recentPages";
 import { purgeDeletedNodes } from "../domain/purgeDeletedNodes";
 import { deleteStoredAttachments, storeAttachment } from "../platform/attachments";
 import { awaitWorkspacePersistence, loadNativeWorkspace, maintainNativeDatabase, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
@@ -24,8 +25,22 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
   const initial = readInitialState();
   if (!initial.attachments) initial.attachments = {};
   const commit = (next: NotebookState, operation?: Operation) => {
-    saveWorkspace(next, operation);
-    set({ ...next, pendingOperations: operation ? [...get().pendingOperations, operation] : get().pendingOperations });
+    const current = get();
+    const recordsPageEdit = contentNodesChanged(current, next);
+    const editedAt = operation?.createdAt ?? Date.now();
+    const durableNext = recordsPageEdit
+      ? { ...next, recentPageEdits: { ...next.recentPageEdits, [current.activeRootId]: editedAt } }
+      : next;
+    const durableOperation = operation && recordsPageEdit
+      ? { ...operation, payload: { ...operation.payload, pageId: current.activeRootId } }
+      : operation;
+    saveWorkspace(durableNext, durableOperation);
+    set({
+      ...durableNext,
+      pendingOperations: durableOperation
+        ? [...current.pendingOperations, durableOperation]
+        : current.pendingOperations,
+    });
   };
   const focusAfterNodeRemoval = (
     removedNodeId: string,
@@ -177,6 +192,7 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       const current = state.nodes[nodeId];
       if (!current) return null;
       const splitsActiveRoot = state.activeRootId === nodeId;
+      const createsBeforeCurrent = !splitsActiveRoot && before === "" && after === current.markdown;
       // When an expanded node already has children, Enter should keep the
       // new line directly beneath it instead of placing a sibling after the
       // whole visible subtree.
@@ -186,7 +202,7 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
         nodeId,
         before,
         after,
-        placement: splitsIntoFirstChild ? "first-child" : "after",
+        placement: createsBeforeCurrent ? "before" : splitsIntoFirstChild ? "first-child" : "after",
         newNodeId,
         now: Date.now(),
       });

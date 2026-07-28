@@ -32,6 +32,7 @@ src-tauri/src/
 | `docs/DOMAIN_RULES.md` | 节点身份、树操作、删除与恢复语义 | 业务行为变化前先确认 |
 | `docs/SYNC_PROTOCOL.md` | 操作日志和同步协议 | 同步格式或合并规则变化时 |
 | `docs/编辑规范.md` | 编辑器交互约定 | 输入、快捷键或 Markdown 行为变化时 |
+| `docs/MARKDOWN_SPEC.md` | Markdown 支持边界、Live Preview 与格式快捷键 | Markdown 语法或渲染行为变化时 |
 | `docs/DEVELOPMENT_LOG.md` | 每轮施工范围、决策与验证结果 | 每次修改代码或项目文档时 |
 | `README.md` | 面向使用者的项目能力和运行说明 | 用户确认本轮工作有效后 |
 
@@ -46,6 +47,12 @@ src-tauri/src/
 | SQLite 文本日志压缩与 VACUUM | src-tauri/src/database.rs | cargo check 与桌面端维护入口 |
 | 附件引用保留与物理删除 | src/domain/purgeDeletedNodes.ts、src-tauri/src/attachments.rs | src/domain/purgeDeletedNodes.test.ts |
 | CodeMirror 近视口挂载 | src/components/InlineEditor.tsx | src/components/InlineEditor.test.tsx |
+| Markdown 语法树预览与格式命令 | src/components/markdown/ | src/components/markdown/*.test.ts |
+| 外链安全打开与附件预览适配 | src/platform/externalNavigation.ts、src/components/markdown/markdownInteractions.ts | src/platform/externalNavigation.test.ts、src/components/markdown/markdownDecorations.test.ts |
+| 节点链接标题补全 | src/components/markdown/nodeLinkCompletion.ts、src/components/markdown/markdownEditor.ts | src/components/markdown/markdownLanguage.test.ts |
+| Markdown 可见光标与删除语义 | src/components/markdown/markdownDecorations.ts、src/components/markdown/markdownVisibleEditing.ts、src/components/editorNavigation.ts | src/components/markdown/markdownDecorations.test.ts、src/components/InlineEditor.test.tsx |
+| 文本到节点的渐进范围选择 | src/features/notebook/hooks/useNodeRangeSelection.ts | src/features/notebook/NotebookPanel.test.tsx、docs/编辑规范.md |
+| 最近编辑页面上下文与聚合 | src/domain/recentPages.ts、src/store/useNotebookStore.ts、src/features/dashboard/DashboardPanel.tsx | src/domain/recentPages.test.ts、src/features/dashboard/DashboardPanel.test.tsx、src/store/useNotebookStore.test.ts |
 | 树块空白坐标命中 | src/components/treeHitTesting.ts | src/components/treeHitTesting.test.ts |
 | 大列表窗口化和交互兼容 | src/features/notebook/NotebookPanel.tsx | src/features/notebook/NotebookPanel.test.tsx |
 | 节点与视图根层级线 | src/features/notebook/hooks/useHierarchyGuides.ts | src/features/notebook/NotebookPanel.test.tsx、src/features/notebook/model/hierarchyGuideLayout.test.ts |
