@@ -18,6 +18,21 @@ describe("treeBlockAtPoint", () => {
 
     expect(treeBlockAtPoint(tree, 40, 28)?.dataset.treeBlockKey).toBe("first");
     expect(treeBlockAtPoint(tree, 40, 40)?.dataset.treeBlockKey).toBe("second");
+    expect(treeBlockAtPoint(tree, 40, 26, false, true)?.dataset.treeBlockKey).toBe("first");
+    expect(treeBlockAtPoint(tree, 40, 30, false, true)?.dataset.treeBlockKey).toBe("second");
+  });
+
+  it("can resolve a row by vertical position when the page canvas is wider than the tree", () => {
+    const tree = document.createElement("div");
+    const row = document.createElement("div");
+    row.dataset.treeBlockKey = "row";
+    tree.append(row);
+    document.body.append(tree);
+    Object.defineProperty(tree, "getBoundingClientRect", { value: () => rect(100, 0, 900, 100) });
+    Object.defineProperty(row, "getBoundingClientRect", { value: () => rect(100, 0, 900, 24) });
+
+    expect(treeBlockAtPoint(tree, 40, 12)?.dataset.treeBlockKey).toBeUndefined();
+    expect(treeBlockAtPoint(tree, 40, 12, true)?.dataset.treeBlockKey).toBe("row");
   });
 });
 

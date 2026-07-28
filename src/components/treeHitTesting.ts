@@ -3,10 +3,13 @@ export function treeBlockAtPoint(
   treeList: HTMLElement | null,
   clientX: number,
   clientY: number,
+  allowOutsideHorizontal = false,
+  assignGapToNearest = false,
 ): HTMLElement | null {
   if (!treeList) return null;
   const listRect = treeList.getBoundingClientRect();
-  if (clientX < listRect.left || clientX > listRect.right || clientY < listRect.top || clientY > listRect.bottom) return null;
+  if ((!allowOutsideHorizontal && (clientX < listRect.left || clientX > listRect.right))
+    || clientY < listRect.top || clientY > listRect.bottom) return null;
 
   const rows = Array.from(treeList.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
   let nearest: HTMLElement | null = null;
@@ -14,10 +17,12 @@ export function treeBlockAtPoint(
   for (const row of rows) {
     const rect = row.getBoundingClientRect();
     const marginBottom = Math.max(0, Number.parseFloat(getComputedStyle(row).marginBottom) || 0);
-    const bottom = rect.bottom + marginBottom;
-    if (clientY >= rect.top && clientY <= bottom) return row;
+    const ownedBottom = rect.bottom + marginBottom;
+    if (clientY >= rect.top && clientY <= rect.bottom) return row;
+    if (!assignGapToNearest && clientY <= ownedBottom && clientY >= rect.bottom) return row;
 
-    const distance = clientY < rect.top ? rect.top - clientY : clientY - bottom;
+    const distanceBottom = assignGapToNearest ? rect.bottom : ownedBottom;
+    const distance = clientY < rect.top ? rect.top - clientY : clientY - distanceBottom;
     if (distance < nearestDistance) {
       nearest = row;
       nearestDistance = distance;

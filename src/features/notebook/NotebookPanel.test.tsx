@@ -81,6 +81,48 @@ describe("NotebookPanel root heading", () => {
 
     expect(container.querySelector(".root-node-heading.view-root-heading")).not.toBeNull();
   });
+
+  it("projects root-heading side gutters to a real editor position", () => {
+    const store = useNotebookStore.getState();
+    const content = Object.values(store.nodes).find((node) => node.kind === "content")!;
+    store.editMarkdown(content.id, "root canvas");
+    const state = useNotebookStore.getState();
+    const activeContent = state.nodes[content.id];
+    const { container } = render(
+      <NotebookPanel
+        view="outline"
+        activeRoot={activeContent}
+        rootId={activeContent.id}
+        visibleNodes={visibleNodes(state, activeContent.id)}
+      />,
+    );
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const heading = container.querySelector<HTMLElement>(".root-node-heading")!;
+    const rootEditor = EditorView.findFromDOM(heading.querySelector<HTMLElement>(".inline-editor")!)!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const posAtCoords = vi.spyOn(EditorView.prototype, "posAtCoords")
+      .mockReturnValueOnce(3)
+      .mockReturnValueOnce(4);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === heading) return box(100, 80, 900, 120);
+      if (this.classList.contains("cm-content")) return box(200, 80, 800, 120);
+      if (this.classList.contains("tree-list")) return box(100, 180, 900, 400);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(100, 180 + rowIndex * 32, 900, 204 + rowIndex * 32);
+      return box(0, 0, 0, 0);
+    });
+
+    fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 20, clientY: 100 });
+
+    expect(useNotebookStore.getState().activeNodeId).toBe(activeContent.id);
+    expect(rootEditor.state.selection.main.head).toBe(3);
+    expect(posAtCoords).toHaveBeenCalledWith({ x: 201, y: 100 }, false);
+
+    fireEvent.pointerDown(area, { button: 0, pointerId: 2, clientX: 20, clientY: 135 });
+
+    expect(rootEditor.state.selection.main.head).toBe(4);
+    expect(posAtCoords).toHaveBeenLastCalledWith({ x: 201, y: 119 }, false);
+  });
 });
 
 describe("NotebookPanel node range selection", () => {
@@ -179,15 +221,117 @@ describe("NotebookPanel node range selection", () => {
     });
     rows.forEach((row) => { row.style.marginBottom = "8px"; });
 
-    fireEvent.click(treeList, { clientX: 700, clientY: contentTop + 26 });
+    fireEvent.pointerDown(treeList, { button: 0, pointerId: 1, clientX: 700, clientY: contentTop + 26 });
 
     expect(useNotebookStore.getState().activeNodeId).toBe(content.id);
     useNotebookStore.getState().setActiveNode(null);
     const ghostIndex = rows.findIndex((row) => row.dataset.selectionKey === `ghost:${ROOT_ID}`);
 
-    fireEvent.click(treeList, { clientX: 700, clientY: 4 + ghostIndex * 32 + 26 });
+    fireEvent.pointerDown(treeList, { button: 0, pointerId: 2, clientX: 700, clientY: 4 + ghostIndex * 32 + 26 });
 
     expect(useNotebookStore.getState().activeGhostParentId).toBe(ROOT_ID);
+  });
+
+  it("uses the page ghost as the landing point for canvas whitespace after the tree", () => {
+    useNotebookStore.getState().setActiveNode(null);
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(0, 100, 860, 260);
+      return box(0, 0, 860, 800);
+    });
+
+    fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 700, clientY: 700 });
+
+    expect(container.querySelector(".content-area")?.classList.contains("is-editable-canvas")).toBe(true);
+    expect(useNotebookStore.getState().activeGhostParentId).toBe(ROOT_ID);
+  });
+
+  it("resolves blank canvas focus before the current editor can blur", async () => {
+    const state = useNotebookStore.getState();
+    const content = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().focusNode(content.id, 0);
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const sourceRow = container.querySelector<HTMLElement>(`[data-node-id="${content.id}"]`)!;
+    const sourceEditor = EditorView.findFromDOM(sourceRow.querySelector<HTMLElement>(".inline-editor")!)!;
+    const blurTargets: Array<string | null> = [];
+    sourceEditor.contentDOM.addEventListener("blur", () => {
+      blurTargets.push(useNotebookStore.getState().activeGhostParentId);
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(0, 100, 860, 260);
+      return box(0, 0, 860, 800);
+    });
+
+    expect(sourceEditor.hasFocus).toBe(true);
+    const dispatchResult = fireEvent.pointerDown(area, {
+      button: 0,
+      pointerId: 1,
+      clientX: 700,
+      clientY: 700,
+    });
+
+    expect(dispatchResult).toBe(false);
+    expect(useNotebookStore.getState().activeGhostParentId).toBe(ROOT_ID);
+    await waitFor(() => expect(blurTargets).toEqual([ROOT_ID]));
+  });
+
+  it("keeps the click canvas full width while the document column stays constrained", () => {
+    const { container } = renderOutline();
+
+    expect(container.querySelector(".content-area")).not.toBeNull();
+    expect(container.querySelector(".content-area > .content-canvas-inner")).not.toBeNull();
+  });
+
+  it("uses the row under the pointer even when clicking in the canvas side gutter", () => {
+    const state = useNotebookStore.getState();
+    const content = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().editMarkdown(content.id, "canvas position");
+    useNotebookStore.getState().setActiveNode(null);
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const contentIndex = rows.findIndex((row) => row.dataset.nodeId === content.id);
+    const contentEditor = EditorView.findFromDOM(rows[contentIndex].querySelector<HTMLElement>(".inline-editor")!)!;
+    const contentTop = 4 + contentIndex * 32;
+    const posAtCoords = vi.spyOn(EditorView.prototype, "posAtCoords")
+      .mockReturnValueOnce(2)
+      .mockReturnValueOnce(7);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(100, 0, 900, 240);
+      if (this.classList.contains("cm-content")) return box(200, contentTop, 800, contentTop + 24);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(100, 4 + rowIndex * 32, 900, 28 + rowIndex * 32);
+      return box(0, 0, 0, 0);
+    });
+
+    fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 20, clientY: contentTop + 10 });
+
+    expect(useNotebookStore.getState().activeNodeId).toBe(content.id);
+    expect(contentEditor.state.selection.main.head).toBe(2);
+    expect(posAtCoords).toHaveBeenLastCalledWith({ x: 201, y: contentTop + 10 }, false);
+
+    fireEvent.pointerDown(area, { button: 0, pointerId: 2, clientX: 980, clientY: contentTop + 10 });
+
+    expect(contentEditor.state.selection.main.head).toBe(7);
+    expect(posAtCoords).toHaveBeenLastCalledWith({ x: 799, y: contentTop + 10 }, false);
+  });
+
+  it.each(["search", "trash"] as const)("does not turn %s into an editable canvas", (view) => {
+    const { container } = render(
+      <NotebookPanel view={view} activeRoot={null} rootId={ROOT_ID} visibleNodes={[]} />,
+    );
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    useNotebookStore.getState().setActiveNode(null);
+
+    fireEvent.pointerDown(area, { button: 0, pointerId: 1, clientX: 700, clientY: 700 });
+
+    expect(area.classList.contains("is-editable-canvas")).toBe(false);
+    expect(useNotebookStore.getState().activeGhostParentId).toBeNull();
   });
 
   it("keeps a selected empty parent subtree box around its ghost row", () => {
@@ -211,23 +355,239 @@ describe("NotebookPanel node range selection", () => {
     expect(container.querySelectorAll(".selection-subtree-box > .selection-subtree-root")).toHaveLength(1);
   });
 
-  it("clears editor text selection for the rest of a cross-node mouse drag", () => {
+  it("keeps the editor selection logically intact during node preview and clears it on commit", () => {
     const state = useNotebookStore.getState();
     const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().editMarkdown(source.id, "preview selection");
     const { container } = renderOutline();
     const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
     const targetRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
     const area = container.querySelector<HTMLElement>(".content-area")!;
     const host = sourceRow.querySelector<HTMLElement>(".inline-editor")!;
     const editor = EditorView.findFromDOM(host)!;
-    editor.dispatch({ selection: { anchor: 0, head: editor.state.doc.length } });
-
     dragTo(targetRow);
     fireEvent.pointerDown(host.querySelector(".cm-content")!, { button: 0, pointerId: 4 });
-    fireEvent.pointerMove(area, { pointerId: 4, clientX: 20, clientY: 200 });
     editor.dispatch({ selection: { anchor: 0, head: editor.state.doc.length } });
+    fireEvent.pointerMove(area, { pointerId: 4, clientX: 20, clientY: 200 });
     fireEvent.mouseMove(area, { buttons: 1, clientX: 20, clientY: 200 });
 
+    expect(editor.state.selection.main.empty).toBe(false);
+    expect(editor.hasFocus).toBe(true);
+    expect(area.classList.contains("has-node-selection")).toBe(true);
+
+    fireEvent.pointerUp(area, { pointerId: 4 });
+
+    expect(editor.state.selection.main.empty).toBe(true);
+    expect(editor.hasFocus).toBe(false);
+    expect(document.activeElement).toBe(area);
+  });
+
+  it.each([
+    { label: "left", clientX: 120 },
+    { label: "right", clientX: 920 },
+  ])("promotes a drag beyond the node layout on the $label to a single-node selection", ({ clientX }) => {
+    const state = useNotebookStore.getState();
+    const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const sourceIndex = rows.indexOf(sourceRow);
+    const sourceTop = 100 + sourceIndex * 32;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(100, 100, 900, 100 + rows.length * 32);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(100, 100 + rowIndex * 32, 900, 124 + rowIndex * 32);
+      return box(0, 0, 0, 0);
+    });
+    dragTo(area);
+
+    fireEvent.pointerDown(content, { button: 0, pointerId: 8, clientX: 300, clientY: sourceTop + 12 });
+    fireEvent.pointerMove(area, { pointerId: 8, clientX, clientY: sourceTop + 12 });
+
+    expect(container.querySelectorAll(".is-node-selected")).toHaveLength(1);
+    expect(sourceRow.classList.contains("is-node-selected")).toBe(true);
+    expect(document.activeElement).toBe(content);
+
+    fireEvent.pointerUp(area, { pointerId: 8 });
+
+    expect(document.activeElement).toBe(area);
+  });
+
+  it("continues a node selection vertically through either page side gutter", () => {
+    const store = useNotebookStore.getState();
+    const source = Object.values(store.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    const targetId = store.createSibling(source.id, "side target")!;
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const targetRow = container.querySelector<HTMLElement>(`[data-selection-key="${targetId}"]`)!;
+    const sourceTop = 100 + rows.indexOf(sourceRow) * 32;
+    const targetTop = 100 + rows.indexOf(targetRow) * 32;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(100, 100, 900, 100 + rows.length * 32);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(100, 100 + rowIndex * 32, 900, 124 + rowIndex * 32);
+      return box(0, 0, 0, 0);
+    });
+    dragTo(area);
+
+    fireEvent.pointerDown(content, { button: 0, pointerId: 9, clientX: 300, clientY: sourceTop + 12 });
+    fireEvent.pointerMove(area, { pointerId: 9, clientX: 20, clientY: sourceTop + 12 });
+    fireEvent.pointerMove(area, { pointerId: 9, clientX: 980, clientY: targetTop + 12 });
+
+    expect(sourceRow.classList.contains("is-node-selected")).toBe(true);
+    expect(targetRow.classList.contains("is-node-selected")).toBe(true);
+  });
+
+  it("keeps a horizontal drag inside the node layout as a text selection", () => {
+    const state = useNotebookStore.getState();
+    const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().editMarkdown(source.id, "select text");
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(sourceRow.querySelector<HTMLElement>(".inline-editor")!)!;
+    vi.spyOn(sourceRow, "getBoundingClientRect").mockReturnValue(box(100, 100, 900, 124));
+    editor.dispatch({ selection: { anchor: 0, head: 6 } });
+    editor.focus();
+    dragTo(content);
+
+    fireEvent.pointerDown(content, { button: 0, pointerId: 10, clientX: 300, clientY: 112 });
+    fireEvent.pointerMove(area, { pointerId: 10, clientX: 500, clientY: 112 });
+
+    expect(container.querySelectorAll(".is-node-selected")).toHaveLength(0);
+    expect(editor.state.selection.main.empty).toBe(false);
+    expect(editor.hasFocus).toBe(true);
+  });
+
+  it.each([
+    { label: "empty", markdown: "" },
+    { label: "wrapped text", markdown: "first line\nsecond line" },
+  ])("returns a $label drag from node preview to text selection", ({ markdown }) => {
+    const state = useNotebookStore.getState();
+    const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().editMarkdown(source.id, markdown);
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const sourceTop = 100 + rows.indexOf(sourceRow) * 40;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(sourceRow.querySelector<HTMLElement>(".inline-editor")!)!;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(100, 100, 900, 100 + rows.length * 40);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(100, 100 + rowIndex * 40, 900, 132 + rowIndex * 40);
+      return box(0, 0, 0, 0);
+    });
+    editor.dispatch({ selection: { anchor: 0, head: editor.state.doc.length } });
+    editor.focus();
+    dragTo(area);
+
+    fireEvent.pointerDown(content, { button: 0, pointerId: 11, clientX: 300, clientY: sourceTop + 16 });
+    fireEvent.pointerMove(area, { pointerId: 11, clientX: 20, clientY: sourceTop + 16 });
+
+    expect(sourceRow.classList.contains("is-node-selected")).toBe(true);
+    expect(area.classList.contains("has-node-selection")).toBe(true);
+    expect(editor.state.selection.main.from).toBe(0);
+    expect(editor.state.selection.main.to).toBe(editor.state.doc.length);
+    expect(editor.hasFocus).toBe(true);
+
+    fireEvent.pointerMove(area, { pointerId: 11, clientX: 300, clientY: sourceTop + 16 });
+
+    expect(container.querySelectorAll(".is-node-selected")).toHaveLength(0);
+    expect(area.classList.contains("has-node-selection")).toBe(false);
+    expect(editor.state.selection.main.from).toBe(0);
+    expect(editor.state.selection.main.to).toBe(editor.state.doc.length);
+    expect(editor.hasFocus).toBe(true);
+
+    fireEvent.pointerUp(area, { pointerId: 11 });
+
+    expect(editor.state.selection.main.from).toBe(0);
+    expect(editor.state.selection.main.to).toBe(editor.state.doc.length);
+    expect(editor.hasFocus).toBe(true);
+  });
+
+  it("returns from a cross-node preview to the anchor editor", () => {
+    const store = useNotebookStore.getState();
+    const source = Object.values(store.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    const targetId = store.createSibling(source.id, "preview target")!;
+    store.editMarkdown(source.id, "anchor text");
+    const { container } = renderOutline();
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const targetRow = container.querySelector<HTMLElement>(`[data-selection-key="${targetId}"]`)!;
+    const sourceTop = 100 + rows.indexOf(sourceRow) * 40;
+    const targetTop = 100 + rows.indexOf(targetRow) * 40;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(sourceRow.querySelector<HTMLElement>(".inline-editor")!)!;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(100, 100, 900, 100 + rows.length * 40);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(100, 100 + rowIndex * 40, 900, 132 + rowIndex * 40);
+      return box(0, 0, 0, 0);
+    });
+    editor.dispatch({ selection: { anchor: 1, head: 6 } });
+    editor.focus();
+    dragTo(area);
+
+    fireEvent.pointerDown(content, { button: 0, pointerId: 12, clientX: 300, clientY: sourceTop + 16 });
+    fireEvent.pointerMove(area, { pointerId: 12, clientX: 980, clientY: targetTop + 16 });
+
+    expect(sourceRow.classList.contains("is-node-selected")).toBe(true);
+    expect(targetRow.classList.contains("is-node-selected")).toBe(true);
+
+    fireEvent.pointerMove(area, { pointerId: 12, clientX: 300, clientY: sourceTop + 16 });
+    fireEvent.pointerUp(area, { pointerId: 12 });
+
+    expect(container.querySelectorAll(".is-node-selected")).toHaveLength(0);
+    expect(editor.state.selection.main.from).toBe(1);
+    expect(editor.state.selection.main.to).toBe(6);
+    expect(editor.hasFocus).toBe(true);
+  });
+
+  it.each([
+    { label: "empty", markdown: "" },
+    { label: "non-empty", markdown: "editable node" },
+  ])("returns focus from a node selection to a $label editor without content-specific handling", async ({ markdown }) => {
+    const state = useNotebookStore.getState();
+    const source = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().editMarkdown(source.id, markdown);
+    const { container } = renderOutline();
+    const sourceRow = container.querySelector<HTMLElement>(`[data-selection-key="${source.id}"]`)!;
+    const targetRow = container.querySelector<HTMLElement>(`[data-selection-key="ghost:${ROOT_ID}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    const content = sourceRow.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(sourceRow.querySelector<HTMLElement>(".inline-editor")!)!;
+    editor.focus();
+    dragTo(targetRow);
+
+    fireEvent.pointerDown(content, { button: 0, pointerId: 6 });
+    fireEvent.pointerMove(area, { pointerId: 6, clientX: 20, clientY: 200 });
+
+    expect(document.activeElement).toBe(content);
+    expect(editor.hasFocus).toBe(true);
+    expect(container.querySelectorAll(".is-node-selected").length).toBeGreaterThan(1);
+
+    fireEvent.pointerUp(area, { pointerId: 6 });
+    expect(document.activeElement).toBe(area);
+    expect(editor.hasFocus).toBe(false);
+    fireEvent.pointerDown(content, { button: 0, pointerId: 7 });
+    fireEvent.mouseDown(content, { button: 0 });
+
+    await waitFor(() => expect(editor.hasFocus).toBe(true));
+    expect(document.activeElement).toBe(content);
+    expect(container.querySelectorAll(".is-node-selected")).toHaveLength(0);
     expect(editor.state.selection.main.empty).toBe(true);
   });
 

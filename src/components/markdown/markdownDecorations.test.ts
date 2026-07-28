@@ -19,11 +19,20 @@ beforeEach(() => {
   useNotebookStore.setState(useNotebookStore.getInitialState(), true);
 });
 
-function createView(doc: string, anchor = 0) {
+function createView(doc: string, anchor = 0, parentClassName = "") {
   const parent = document.createElement("div");
+  parent.className = parentClassName;
+  const mount = parentClassName === "tree-list"
+    ? (() => {
+      const row = document.createElement("div");
+      row.className = "tree-row";
+      parent.append(row);
+      return row;
+    })()
+    : parent;
   document.body.append(parent);
   const view = new EditorView({
-    parent,
+    parent: mount,
     state: EditorState.create({
       doc,
       selection: { anchor },
@@ -158,6 +167,10 @@ describe("Markdown live preview", () => {
     const link = safe.dom.querySelector<HTMLButtonElement>(".cm-live-link")!;
 
     expect(safe.contentDOM.textContent).toBe("site");
+    expect(link.querySelector(".cm-live-link-icon")?.getAttribute("aria-hidden")).toBe("true");
+    expect(link.querySelector<HTMLImageElement>(".cm-live-link-favicon")?.src).toBe("https://example.com/favicon.ico");
+    link.querySelector<HTMLImageElement>(".cm-live-link-favicon")?.dispatchEvent(new Event("error"));
+    expect(link.querySelector(".cm-live-link-icon svg")).not.toBeNull();
     link.click();
     expect(open).not.toHaveBeenCalled();
     expect(safe.dom.querySelector(".cm-live-link-menu")?.textContent).toContain("打开");
@@ -278,6 +291,18 @@ describe("Markdown live preview", () => {
     expect(view.dom.querySelector(".cm-live-link-menu")).toBeNull();
   });
 
+  it("allows an open link menu to overflow a short tree list", () => {
+    const view = createView("[站点](https://example.com)", 0, "tree-list");
+    const treeList = view.dom.closest<HTMLElement>(".tree-list")!;
+    const link = view.dom.querySelector<HTMLButtonElement>(".cm-live-link")!;
+
+    link.click();
+    expect(treeList.classList.contains("has-link-menu")).toBe(true);
+
+    link.click();
+    expect(treeList.classList.contains("has-link-menu")).toBe(false);
+  });
+
   it("deletes a complete preview component as a unit", () => {
     const source = "[[node:missing]]tail";
     const view = createView(source, "[[node:missing]]".length);
@@ -293,6 +318,7 @@ describe("Markdown live preview", () => {
     const link = view.dom.querySelector<HTMLButtonElement>(".cm-live-node-link")!;
 
     expect(link.textContent).toBe("Target node");
+    expect(link.querySelector(".cm-live-node-link-icon svg")).not.toBeNull();
     link.click();
     expect(useNotebookStore.getState().activeRootId).toBe(target.id);
   });

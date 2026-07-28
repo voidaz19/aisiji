@@ -1,5 +1,55 @@
 # 开发施工日志
 
+## 2026-07-28：修复链接菜单在短节点列表中被裁剪
+
+### 问题与原因
+
+- 节点数量较少时，外部链接菜单向下展开会被截断。
+- 根因是 `.tree-list` 的 `overflow: clip` 裁剪了超出列表自身高度的绝对定位菜单；不是菜单层级不足。
+
+### 修改
+
+- 链接菜单打开时给当前 `.tree-list` 增加 `has-link-menu`，临时允许 `overflow: visible`；菜单关闭或编辑器销毁时清理该状态。
+- 树列表平时继续保持 `overflow: clip`，不改变虚拟列表、拖拽命中区和层级线的默认裁剪行为。
+- `docs/MARKDOWN_SPEC.md`：记录菜单打开期间的溢出规则。
+
+### 验证
+
+- 定向 Markdown 测试通过（25 条）；完整 `npm run check` 通过（模块边界、31 个测试文件/208 条测试、生产构建、Rust 格式和 Rust 编译）。
+- 用户复测：在节点数量很少、链接靠近列表底部时打开菜单，确认三个菜单项完整可见；关闭菜单后列表布局不变。
+- README 暂不更新，待用户确认本轮工作有效无误后再更新。
+
+## 2026-07-28：外部链接增加地球识别图标
+
+### 修改
+
+- 新增轻量 `lucide` DOM 图标依赖；`ExternalLinkWidget` 在链接标题前加入 `Earth` 图标，图标作为低强调装饰，不单独响应点击，也不改变链接组件整体原子范围。
+- `src/components/editorTheme.ts`：补充图标尺寸、基线和透明度样式，保持链接文字的原有颜色与下划线。
+- `src/components/markdown/markdownDecorations.test.ts`：锁定图标存在、装饰性 `aria-hidden` 及原有链接菜单行为。
+- `docs/MARKDOWN_SPEC.md`：记录外部链接的地球识别图标。
+
+### 验证
+
+- 首版通过 `react-dom/server` 把 React 图标转为 DOM，导致笔记页面分包从约 95KB 增长到 286KB，已撤销该方案；改用 Lucide 原生 DOM 创建后恢复为约 96KB。
+- 定向 Markdown 装饰测试通过（24 条）；完整 `npm run check` 通过（模块边界、31 个测试文件/207 条测试、生产构建、Rust 格式和 Rust 编译）。
+- 用户复测：请观察普通网页链接标题左侧的地球图标，确认图标不抢文字、不影响点击和菜单打开。
+- README 暂不更新，待用户确认本轮工作有效无误后再更新。
+
+## 2026-07-28：网站图标与节点链接图标
+
+### 修改
+
+- 外链预览优先尝试目标站点自身的 `/favicon.ico`，失败时回退 Lucide `Earth`；不使用第三方 favicon 聚合服务，避免额外泄露访问目标。
+- 节点链接标题前增加图标，用户对比六种实际尺寸方案后选择 Lucide `FileText`；节点标题动态刷新时保留图标。
+- `src/components/markdown/markdownDecorations.test.ts`：覆盖网站图标地址、加载失败回退和节点图标存在性。
+- `docs/MARKDOWN_SPEC.md`：记录网站图标和节点链接图标规则。
+
+### 验证
+
+- 完整 `npm run check` 通过（模块边界、31 个测试文件/207 条测试、生产构建、Rust 格式和 Rust 编译）。
+- 用户复测：打开带 favicon 的网站链接应显示网站图标，无 favicon 时显示地球；节点链接应显示网络节点图标。
+- README 暂不更新，待用户确认本轮工作有效无误后再更新。
+
 ## 2026-07-28：原子组件内容边界与链接菜单删除
 
 ### 问题与原因
@@ -420,3 +470,122 @@
 - 定向前端测试、TypeScript 生产构建、Rust 格式与 Rust 编译均已通过。
 - 完整 npm run check：通过（模块边界、24 个测试文件/131 条测试、生产构建、Rust 格式和 Rust 编译）。
 - 用户实际数据复测：待用户验收页面切换、编辑、滚动、拖拽和设置页维护入口。
+
+## 2026-07-28：页面级连续可编辑画布
+
+### 用户确认与范围
+
+- 用户确认采用 Tana 式“原子节点 + 连续可编辑画布”方向：不把整棵树改成单一 `contenteditable`，节点继续保留独立 ID、Markdown、Store 操作和同步边界。
+- 页面级协调层只负责把空白区域的点击落到正确的节点编辑器或页面级 GhostEditor；不改变节点拆分、合并、移动和同步语义。
+
+### 实现
+
+- 将树列表点击处理提升到 `src/features/notebook/NotebookPanel.tsx` 的页面级 `onContentAreaClick`，避免 `.tree-list` 与 `.content-area` 双重处理。
+- 节点横向空白与布局间隙继续通过 `treeBlockAtPoint` 聚焦最近树块；树末尾及页面其他空白回退到当前页面 `rootId` 的 GhostEditor。
+- 排除按钮、输入框、链接、附件、折叠按钮、层级线和 CodeMirror 等交互目标，搜索页与回收站不启用画布处理。
+- 为可编辑视图增加 `.content-area.is-editable-canvas { cursor: text; }`，让空白区域的可编辑性与实际焦点行为一致。
+
+### 验证
+
+- 定向测试通过：`src/features/notebook/NotebookPanel.test.tsx`、`src/components/treeHitTesting.test.ts`，共 25 条测试。
+- 新增回归覆盖：树末尾/页面空白聚焦页面 GhostEditor；搜索页和回收站不启用连续画布。
+- 完整 `npm run check`：通过（模块边界、31 个测试文件/215 条测试、生产构建、Rust 格式和 Rust 编译）。
+- README 暂不更新，待用户实际确认画布点击、编辑和只读视图均符合预期。
+
+### 左右画布补充
+
+- 用户复测指出左右两侧仍是死区；根因是 `.content-area` 本身限制为 `860px`，左右区域不在点击 DOM 内。
+- `.content-area` 改为全宽滚动画布，新增 `.content-canvas-inner` 保留 `860px` 内容列；页面级点击处理继续挂在外层，左右空白现在与底部空白使用相同的页面 GhostEditor 落点。
+- NotebookPanel 回归测试补充外层全宽画布与内层约束结构断言。
+
+### 横向命中补充
+
+- 用户继续复测发现左右区域仍像死区；根因是 `treeBlockAtPoint` 默认同时限制 X/Y 在树列矩形内，侧边点击无法命中同一纵向节点。
+- 页面画布调用改为只按 Y 命中树块，保留树列内部调用的严格 X/Y 边界；点击侧边与对应节点同一行时聚焦该节点，行外空白仍聚焦页面 GhostEditor。
+- 新增树命中纯函数测试和 NotebookPanel 侧边点击回归测试。
+
+### 连续光标投影修正
+
+- 用户指出“整页有响应”不等于“整页编辑”；此前左右侧边只按 Y 找节点并统一落到节点末尾，空间映射不连续。
+- 页面画布现在使用 CodeMirror `posAtCoords` 将空白点击投影到对应视觉行的真实文档位置：左侧映射视觉行开头，右侧映射视觉行末尾，自动兼容换行与 Markdown 原子组件。
+- 根节点标题纳入同一坐标投影；标题与第一树行之间的空白按纵向距离选择最近目标，只有最后树块下方才落到页面 GhostEditor。
+- 回归测试验证根标题侧边、标题下方空白、普通节点左右侧边及 CodeMirror 实际 selection。
+
+### 画布焦点转移时序修复
+
+- 用户复测发现点击整页画布时，当前 CodeMirror 会先失焦，再把焦点落到目标节点或页面 GhostEditor，造成 Live Preview 短暂切换和视觉闪动。
+- 根因是画布协调原先依赖 `click`；浏览器在 `pointerdown` 之后、`click` 之前已经执行默认焦点转移，因此页面级处理来不及阻止中间失焦。
+- `src/features/notebook/NotebookPanel.tsx`：空白画布改在主按钮 `pointerdown` 阶段解析目标，并对自定义焦点转移调用 `preventDefault()`；编辑器、按钮、链接、输入框、层级线等原生交互目标继续放行。
+- `src/features/notebook/NotebookPanel.test.tsx`：既有画布落点用例迁移到真实 `pointerdown` 路径；新增回归测试，确认事件默认行为已取消，且旧编辑器发生 blur 时页面 Ghost 目标已经激活。
+- 相关结构与 SPEC 索引仍由 `docs/PROJECT_INDEX.md` 中“页面级连续可编辑画布落点”条目覆盖，无需新增模块或索引项。
+
+### 验证补充
+
+- 定向测试通过：`src/features/notebook/NotebookPanel.test.tsx`、`src/components/treeHitTesting.test.ts`，共 30 条测试。
+- 完整 `npm run check`：通过（模块边界、31 个测试文件/216 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- README 暂不更新，待用户实际验收本轮焦点时序修复后再更新。
+
+### 节点范围选择与编辑焦点所有权修复
+
+- 用户复测发现从空节点开始形成节点范围选择后，再点击该空节点时插入光标不出现；空节点只是最稳定的触发条件，根因不是空内容本身。
+- 根因是节点范围选择已经接管键盘与选择样式，但原 CodeMirror 仍保留 DOM 焦点；退出范围选择时再次点击同一编辑器不会产生完整的焦点交接，导致编辑器逻辑焦点与可见光标状态不一致。
+- `src/features/notebook/hooks/useNodeRangeSelection.ts`：节点范围选择首次成立时，折叠编辑器文本选区并把 DOM 焦点统一转移到画布容器；节点选择期间由画布持有键盘焦点。
+- 将上述模式切换收敛为 `enterNodeSelectionMode`：统一表达“清理 CodeMirror/DOM 文本选区并由画布接管焦点”；拖动期间和 pointerup 后抵消 CodeMirror 文档级监听的防御性清理仍独立保留。
+- `src/features/notebook/NotebookPanel.tsx`：画布增加 `tabIndex={-1}`，仅提供程序化焦点落点，不进入正常 Tab 顺序，也不改变画布空白的 pointerdown 坐标投影。
+- 点击任意 `InlineEditor` 时仍由捕获阶段同步清除节点选择，并放行 CodeMirror 原生 pointer/mouse 处理，使空内容和非空内容使用同一套焦点与光标恢复路径；未增加空节点特判。
+- `src/features/notebook/NotebookPanel.test.tsx`：新增参数化回归测试，覆盖空内容与非空内容，验证节点选择成立后画布持有焦点、点击编辑器后选择清除且 CodeMirror 恢复真实 DOM 焦点和折叠光标。
+- 项目结构与 SPEC 索引仍由 `docs/PROJECT_INDEX.md` 的“文本到节点的渐进范围选择”和“页面级连续可编辑画布落点”条目覆盖，无需新增索引项。
+
+### 验证补充
+
+- 定向 `NotebookPanel` 测试通过：1 个测试文件/30 条测试。
+- 完整 `npm run check`：通过（模块边界、31 个测试文件/218 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- README 暂不更新，待用户实际验收本轮焦点所有权修复后再更新。
+
+### 节点布局越界选择与整页侧边命中
+
+- 用户指出原手势必须纵向进入其他节点后才能形成节点选择，且指针进入页面左右两侧后范围选择停止响应；确认采用 Tana 式“节点内部选文字、拖出节点布局选节点”的交互。
+- 升级边界采用树行既有的逻辑节点几何：左侧为 `--tree-object-left`，右侧扣除 `--tree-row-right-padding`；不以 CodeMirror 内容宽度为准，避免空内容、换行和 Markdown 原子组件改变手势语义。
+- `src/features/notebook/hooks/useNodeRangeSelection.ts`：指针横向越过起始节点布局时，即使纵向仍在原行，也进入节点选择并选中当前节点。
+- 节点选择模式成立后，坐标命中允许超出树列横向边界，并将节点间布局间隙归给纵向最近节点；因此指针在页面左侧或右侧均可继续上下扩展范围。
+- 指针仍位于起始节点布局内时不升级模式，CodeMirror 的普通横向文本选择保持不变。
+- `src/features/notebook/NotebookPanel.test.tsx`：覆盖向左/向右越界选择单节点、从一侧进入并在另一侧纵向扩展多节点，以及节点布局内横向拖动仍保留文本选择。
+- `docs/编辑规范.md`：补充上述指针手势规范；项目结构与 SPEC 索引继续由 `docs/PROJECT_INDEX.md` 的“文本到节点的渐进范围选择”条目覆盖。
+
+### 验证补充
+
+- 定向 `NotebookPanel` 测试通过：1 个测试文件/34 条测试。
+- 完整 `npm run check`：待本轮执行后补记。
+- README 暂不更新，待用户实际验收本轮侧边节点选择手势后再更新。
+
+### 可逆文字/节点拖选补充
+
+- 用户对照 Tana 后确认：从编辑器内容开始拖动、越过节点布局形成节点选择后，应允许在松手前拖回起始节点布局，恢复为文字选择。
+- `src/features/notebook/hooks/useNodeRangeSelection.ts`：将拖动升级改为可逆预览状态。节点预览期间保留起始 CodeMirror、逻辑文字选区和编辑焦点，仅显示节点范围；拖回起始节点布局立即撤销节点预览。
+- CodeMirror 的文档级鼠标监听可能在节点预览期间改写选区，因此保存进入预览时的选区快照，并在预览鼠标事件、拖回或取消时恢复；不做内容类型特判，也不引入坐标重建。
+- 只有在节点预览状态 `pointerup` 时才折叠文字选区并把焦点交给画布；在文字状态松手保留 CodeMirror 选区。`pointercancel` 只撤销预览，不提交节点选择。
+- `src/App.css`：节点预览存在时统一隐藏 CodeMirror 文字高亮，逻辑选区仍保留，避免文字与节点同时高亮。
+- `src/features/notebook/NotebookPanel.test.tsx`：覆盖预览时保留/提交时清理、空节点、换行内容、跨节点后拖回、左右越界提交，以及提交后空/非空编辑器重新聚焦。
+- 项目结构与 SPEC 索引继续由 `docs/PROJECT_INDEX.md` 的“文本到节点的渐进范围选择”条目覆盖，无需新增索引。
+
+### 验证补充
+
+- 定向 `NotebookPanel` 测试通过：1 个测试文件/37 条测试。
+- 完整 `npm run check`：通过（模块边界、31 个测试文件/225 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- 用户实际验收通过：节点预览期间内容选区高亮正确隐藏，拖回起始节点后文字选区正确恢复。
+- 按项目约定同步更新 `README.md` 的当前能力，补充连续可编辑画布与可逆的文字/节点渐进范围选择。
+
+### 节点预览文字高亮修正
+
+- 用户复测发现进入节点选择预览后仍能看到内容文字选区高亮。
+- 根因是此前只隐藏了 CodeMirror 自绘的 `.cm-selectionBackground`；页面后部的普通 `.cm-editor ::selection` 规则仍会绘制浏览器原生文字选区。
+- `src/App.css`：在普通选区样式之后同时覆盖浏览器原生 `::selection` 与 CodeMirror 自绘选区层，节点预览时两者均透明；拖回内容选择后随 `has-node-selection` 移除而恢复。
+- 现有 `NotebookPanel` 回归继续锁定节点预览状态类的进入与移除；生产构建用于确认最终 CSS 规则及顺序正常生成。
+- 后续审查确认选区视觉此前同时定义在 `src/components/editorTheme.ts` 与 `src/App.css`，职责重复。现已移除主题内的硬编码选区颜色，由 `App.css` 的 `--editor-selection-background` 统一驱动原生 `::selection` 与 CodeMirror 自绘层；节点预览只把该变量切为透明。
+- 保留浏览器和 CodeMirror 的选择、输入法、剪贴板及无障碍能力，仅统一接管视觉表现；不使用全局 `user-select: none` 破坏编辑能力。
+- 项目结构与 SPEC 索引不变，继续由 `docs/PROJECT_INDEX.md` 的“文本到节点的渐进范围选择”条目覆盖；用户验收后已同步更新 README。
+
+### 验证补充
+
+- 定向 `NotebookPanel` 测试通过：1 个测试文件/37 条测试。
+- 完整 `npm run check`：通过（模块边界、31 个测试文件/225 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。

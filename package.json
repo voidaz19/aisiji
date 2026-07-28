@@ -29,6 +29,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "dompurify": "^3.4.12",
+    "lucide": "^1.27.0",
     "lucide-react": "^1.25.0",
     "marked": "^18.0.6",
     "react": "^19.1.0",

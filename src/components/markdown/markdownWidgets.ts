@@ -1,3 +1,4 @@
+import { createElement as createLucideElement, Earth, FileText } from "lucide";
 import { EditorView, WidgetType } from "@codemirror/view";
 import {
   clickableExternalTarget,
@@ -5,6 +6,7 @@ import {
   followNodeLink,
   resolveAttachment,
   resolveNodeLink,
+  websiteFaviconUrl,
 } from "./markdownInteractions";
 
 function preserveEditorFocus(element: HTMLElement, view: EditorView) {
@@ -20,6 +22,20 @@ function escapeLinkLabel(value: string): string {
 
 function escapeLinkTarget(value: string): string {
   return value.replace(/([\\)])/g, "\\$1");
+}
+
+function createInlineIcon(iconNode: Parameters<typeof createLucideElement>[0], className: string): HTMLSpanElement {
+  const icon = document.createElement("span");
+  icon.className = className;
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(createLucideElement(iconNode, {
+    width: 13,
+    height: 13,
+    "stroke-width": 1.8,
+    focusable: "false",
+    "aria-hidden": "true",
+  }));
+  return icon;
 }
 
 export class ExternalLinkWidget extends WidgetType {
@@ -46,7 +62,20 @@ export class ExternalLinkWidget extends WidgetType {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "cm-live-link";
-    trigger.textContent = this.label;
+    const icon = websiteFaviconUrl(this.target)
+      ? document.createElement("img")
+      : createInlineIcon(Earth, "cm-live-link-icon");
+    if (icon instanceof HTMLImageElement) {
+      icon.className = "cm-live-link-icon cm-live-link-favicon";
+      icon.src = websiteFaviconUrl(this.target)!;
+      icon.alt = "";
+      icon.loading = "lazy";
+      icon.decoding = "async";
+      icon.referrerPolicy = "no-referrer";
+      icon.setAttribute("aria-hidden", "true");
+      icon.addEventListener("error", () => icon.replaceWith(createInlineIcon(Earth, "cm-live-link-icon")), { once: true });
+    }
+    trigger.append(icon, document.createTextNode(this.label));
     trigger.title = this.target;
     trigger.setAttribute("aria-haspopup", "menu");
     trigger.setAttribute("aria-expanded", "false");
@@ -55,7 +84,9 @@ export class ExternalLinkWidget extends WidgetType {
     const closeMenu = () => {
       wrapper.querySelector(".cm-live-link-menu")?.remove();
       trigger.setAttribute("aria-expanded", "false");
-      wrapper.closest(".tree-row")?.classList.remove("has-link-menu");
+      const row = wrapper.closest<HTMLElement>(".tree-row");
+      row?.classList.remove("has-link-menu");
+      row?.closest<HTMLElement>(".tree-list")?.classList.remove("has-link-menu");
     };
     const onDocumentMouseDown = (event: MouseEvent) => {
       if (!wrapper.contains(event.target as Node)) closeMenu();
@@ -77,7 +108,9 @@ export class ExternalLinkWidget extends WidgetType {
       } else {
         wrapper.append(this.createMenu(view, closeMenu));
         trigger.setAttribute("aria-expanded", "true");
-        wrapper.closest(".tree-row")?.classList.add("has-link-menu");
+        const row = wrapper.closest<HTMLElement>(".tree-row");
+        row?.classList.add("has-link-menu");
+        row?.closest<HTMLElement>(".tree-list")?.classList.add("has-link-menu");
       }
     });
     return wrapper;
@@ -201,7 +234,9 @@ export class ExternalLinkWidget extends WidgetType {
   }
 
   destroy(dom: HTMLElement) {
-    dom.closest(".tree-row")?.classList.remove("has-link-menu");
+    const row = dom.closest<HTMLElement>(".tree-row");
+    row?.classList.remove("has-link-menu");
+    row?.closest<HTMLElement>(".tree-list")?.classList.remove("has-link-menu");
     this.cleanup.get(dom)?.();
     this.cleanup.delete(dom);
   }
@@ -223,14 +258,15 @@ export class NodeLinkWidget extends WidgetType {
   toDOM(view: EditorView) {
     const element = document.createElement(this.available ? "button" : "span");
     element.className = `cm-live-node-link${this.available ? "" : " is-missing"}`;
-    element.textContent = this.label;
+    const label = document.createTextNode(this.label);
+    element.append(createInlineIcon(FileText, "cm-live-node-link-icon"), label);
     element.setAttribute("title", this.available ? `打开节点：${this.label}` : `节点不存在：${this.target}`);
     if (element instanceof HTMLButtonElement) {
       element.type = "button";
       preserveEditorFocus(element, view);
       element.addEventListener("mouseenter", () => {
         const current = resolveNodeLink(this.target);
-        element.textContent = current.label;
+        label.nodeValue = current.label;
         element.title = current.available ? `打开节点：${current.label}` : `节点不存在：${this.target}`;
       });
       element.addEventListener("click", (event) => {

@@ -78,6 +78,13 @@ export function clickableExternalTarget(target: string): string | null {
   return safeExternalUrl(target);
 }
 
+export function websiteFaviconUrl(target: string): string | null {
+  const safeTarget = safeExternalUrl(target);
+  if (!safeTarget || !/^https?:$/.test(new URL(safeTarget).protocol)) return null;
+  const url = new URL(safeTarget);
+  return `${url.origin}/favicon.ico`;
+}
+
 export function imagePreviewTarget(target: string): string | null {
   const attachment = resolveAttachment(target, "");
   return attachment

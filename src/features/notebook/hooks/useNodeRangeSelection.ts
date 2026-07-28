@@ -10,6 +10,8 @@ interface DragState {
   anchorKey: string;
   pointerId: number;
   nodeMode: boolean;
+  textEditor: EditorView | null;
+  textSelection: { anchor: number; head: number } | null;
 }
 
 export function useNodeRangeSelection(
@@ -53,25 +55,55 @@ export function useNodeRangeSelection(
     setSelection(null);
     drag.current = null;
     if (!key) return;
-    drag.current = { anchorKey: key, pointerId: event.pointerId, nodeMode: false };
+    drag.current = {
+      anchorKey: key,
+      pointerId: event.pointerId,
+      nodeMode: false,
+      textEditor: editorFromTarget(event.target),
+      textSelection: null,
+    };
   }, []);
 
   const onPointerMoveCapture = useCallback((event: PointerEvent<HTMLElement>) => {
     const currentDrag = drag.current;
     if (!currentDrag || currentDrag.pointerId !== event.pointerId) return;
     const hit = document.elementFromPoint?.(event.clientX, event.clientY) ?? event.target;
+    const outsideAnchorLayout = pointOutsideNodeLayout(
+      containerRef.current,
+      currentDrag.anchorKey,
+      event.clientX,
+    );
     const headKey = selectionKeyFromTarget(hit)
-      ?? selectionKeyFromPoint(containerRef.current, event.clientX, event.clientY);
+      ?? selectionKeyFromPoint(
+        containerRef.current,
+        event.clientX,
+        event.clientY,
+        currentDrag.nodeMode || outsideAnchorLayout,
+      );
     if (!headKey) return;
 
-    if (!currentDrag.nodeMode && headKey === currentDrag.anchorKey) return;
+    if (
+      currentDrag.nodeMode
+      && currentDrag.textEditor
+      && pointInsideNodeLayout(containerRef.current, currentDrag.anchorKey, event.clientX, event.clientY)
+    ) {
+      restoreTextSelection(currentDrag);
+      currentDrag.nodeMode = false;
+      setSelection(null);
+      return;
+    }
+
+    if (!currentDrag.nodeMode && headKey === currentDrag.anchorKey && !outsideAnchorLayout) return;
     if (!currentDrag.nodeMode) {
       currentDrag.nodeMode = true;
-      // CodeMirror keeps its own document-level mousemove listener alive for
-      // the duration of a text drag. Stop this event before clearing its state,
-      // otherwise the next mousemove can recreate the text selection.
+      const editorSelection = currentDrag.textEditor?.state.selection.main;
+      currentDrag.textSelection = editorSelection
+        ? { anchor: editorSelection.anchor, head: editorSelection.head }
+        : null;
+      // Keep CodeMirror's logical selection and focus while the node range is
+      // only a preview. Mouse events are suppressed below, and CSS hides the
+      // text highlight until the pointer returns to the anchor node.
       event.preventDefault();
-      clearEditorSelections(containerRef.current);
       event.currentTarget.setPointerCapture?.(event.pointerId);
     }
     event.preventDefault();
@@ -86,6 +118,7 @@ export function useNodeRangeSelection(
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     if (currentDrag.nodeMode) {
+      enterNodeSelectionMode(containerRef.current);
       suppressClick.current = true;
       setTimeout(() => { suppressClick.current = false; }, 0);
       // CodeMirror handles mouseup on the document after pointerup capture.
@@ -95,12 +128,24 @@ export function useNodeRangeSelection(
     }
   }, [containerRef]);
 
+  const cancelPointerSelection = useCallback((event: PointerEvent<HTMLElement>) => {
+    const currentDrag = drag.current;
+    if (!currentDrag || currentDrag.pointerId !== event.pointerId) return;
+    drag.current = null;
+    restoreTextSelection(currentDrag);
+    setSelection(null);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
   const onMouseMoveCapture = useCallback((event: MouseEvent<HTMLElement>) => {
-    if (!drag.current?.nodeMode) return;
+    const currentDrag = drag.current;
+    if (!currentDrag?.nodeMode) return;
     event.preventDefault();
     event.stopPropagation();
-    clearEditorSelections(containerRef.current);
-  }, [containerRef]);
+    restoreTextSelection(currentDrag);
+  }, []);
 
   const onClickCapture = useCallback((event: MouseEvent<HTMLElement>) => {
     if (!suppressClick.current) return;
@@ -240,7 +285,7 @@ export function useNodeRangeSelection(
       onPointerDownCapture,
       onPointerMoveCapture,
       onPointerUpCapture: finishPointerSelection,
-      onPointerCancelCapture: finishPointerSelection,
+      onPointerCancelCapture: cancelPointerSelection,
       onMouseMoveCapture,
       onClickCapture,
       onKeyDownCapture,
@@ -274,8 +319,45 @@ function selectionKeyFromTarget(target: EventTarget | null): string | null {
   return closestSelectionRow(target)?.dataset.selectionKey ?? null;
 }
 
-function selectionKeyFromPoint(container: HTMLElement | null, clientX: number, clientY: number): string | null {
-  return treeBlockAtPoint(container?.querySelector<HTMLElement>(".tree-list") ?? null, clientX, clientY)?.dataset.selectionKey ?? null;
+function selectionKeyFromPoint(
+  container: HTMLElement | null,
+  clientX: number,
+  clientY: number,
+  pageWide = false,
+): string | null {
+  return treeBlockAtPoint(
+    container?.querySelector<HTMLElement>(".tree-list") ?? null,
+    clientX,
+    clientY,
+    pageWide,
+    pageWide,
+  )?.dataset.selectionKey ?? null;
+}
+
+function pointOutsideNodeLayout(container: HTMLElement | null, key: string, clientX: number): boolean {
+  const row = selectionRowForKey(container, key);
+  if (!row) return false;
+  const rect = row.getBoundingClientRect();
+  const objectLeft = Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0;
+  const rightPadding = Number.parseFloat(getComputedStyle(row).getPropertyValue("--tree-row-right-padding")) || 0;
+  return clientX < rect.left + objectLeft || clientX > rect.right - rightPadding;
+}
+
+function pointInsideNodeLayout(
+  container: HTMLElement | null,
+  key: string,
+  clientX: number,
+  clientY: number,
+): boolean {
+  const row = selectionRowForKey(container, key);
+  if (!row) return false;
+  const rect = row.getBoundingClientRect();
+  const objectLeft = Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0;
+  const rightPadding = Number.parseFloat(getComputedStyle(row).getPropertyValue("--tree-row-right-padding")) || 0;
+  return clientX >= rect.left + objectLeft
+    && clientX <= rect.right - rightPadding
+    && clientY >= rect.top
+    && clientY <= rect.bottom;
 }
 
 function isInteractiveControl(target: EventTarget | null): boolean {
@@ -301,6 +383,22 @@ function collapseEditorSelections(container: HTMLElement | null): void {
 function clearEditorSelections(container: HTMLElement | null): void {
   collapseEditorSelections(container);
   window.getSelection()?.removeAllRanges();
+}
+
+function enterNodeSelectionMode(container: HTMLElement | null): void {
+  if (!container) return;
+  clearEditorSelections(container);
+  container.focus({ preventScroll: true });
+}
+
+function restoreTextSelection(dragState: DragState): void {
+  const editor = dragState.textEditor;
+  const selection = dragState.textSelection;
+  if (!editor || !selection) return;
+  const current = editor.state.selection.main;
+  if (current.anchor !== selection.anchor || current.head !== selection.head) {
+    editor.dispatch({ selection, userEvent: "select" });
+  }
 }
 
 function isArrowKey(key: string): boolean {
@@ -339,10 +437,7 @@ function deletionFallback(order: readonly string[], selected: readonly string[])
 }
 
 function focusSelectionKey(container: HTMLElement | null, key: string): void {
-  const row = container
-    ? Array.from(container.querySelectorAll<HTMLElement>("[data-selection-key]"))
-        .find((candidate) => candidate.dataset.selectionKey === key)
-    : undefined;
+  const row = selectionRowForKey(container, key);
   const host = row?.querySelector<HTMLElement>(".inline-editor");
   const editor = host ? EditorView.findFromDOM(host) : null;
   if (editor) {
@@ -350,4 +445,11 @@ function focusSelectionKey(container: HTMLElement | null, key: string): void {
     return;
   }
   row?.querySelector<HTMLElement>("button, [tabindex]")?.focus();
+}
+
+function selectionRowForKey(container: HTMLElement | null, key: string): HTMLElement | undefined {
+  return container
+    ? Array.from(container.querySelectorAll<HTMLElement>("[data-selection-key]"))
+        .find((candidate) => candidate.dataset.selectionKey === key)
+    : undefined;
 }

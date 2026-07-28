@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { EditorView } from "@codemirror/view";
 import {
   DndContext,
   DragOverlay,
@@ -128,21 +129,63 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     ? virtualItems.map((item) => ({ row: renderedRows[item.index], index: item.index, item }))
     : renderedRows.map((row, index) => ({ row, index, item: null }));
 
-  const onTreeListClick = (event: MouseEvent<HTMLDivElement>) => {
+  const focusCanvasGhost = (parentId: string) => {
+    focusGhost(parentId);
+    queueMicrotask(() => {
+      const host = Array.from(contentAreaRef.current?.querySelectorAll<HTMLElement>(".ghost-editor") ?? [])
+        .find((candidate) => candidate.closest<HTMLElement>("[data-parent-id]")?.dataset.parentId === parentId);
+      const editor = host ? EditorView.findFromDOM(host) : null;
+      if (editor && !editor.hasFocus) editor.focus();
+    });
+  };
+
+  const resolveCanvasTarget = (clientX: number, clientY: number) => {
+    const rootHeading = contentAreaRef.current?.querySelector<HTMLElement>(".root-node-heading[data-node-id]");
+    const rootHeadingRect = rootHeading?.getBoundingClientRect();
+    if (activeRoot?.kind === "content" && rootHeading && rootHeadingRect
+      && clientY >= rootHeadingRect.top && clientY <= rootHeadingRect.bottom) {
+      focusNode(activeRoot.id, canvasCursorAtPoint(rootHeading, clientX, clientY));
+      return;
+    }
+    let rowElement = treeBlockAtPoint(treeListRef.current, clientX, clientY, true, true);
+    let blockKey = rowElement?.dataset.treeBlockKey;
+    let block = blockKey ? renderedRows.find((candidate) => candidate.key === blockKey) : undefined;
+    const firstRow = treeListRef.current?.querySelector<HTMLElement>("[data-tree-block-key]");
+    const firstRowRect = firstRow?.getBoundingClientRect();
+    if (!block && firstRow && firstRowRect && clientY < firstRowRect.top) {
+      const rootDistance = rootHeadingRect ? verticalDistance(clientY, rootHeadingRect) : Number.POSITIVE_INFINITY;
+      const firstRowDistance = verticalDistance(clientY, firstRowRect);
+      if (activeRoot?.kind === "content" && rootHeading && rootDistance <= firstRowDistance) {
+        focusNode(activeRoot.id, canvasCursorAtPoint(rootHeading, clientX, clientY));
+        return;
+      }
+      rowElement = firstRow;
+      blockKey = firstRow.dataset.treeBlockKey;
+      block = blockKey ? renderedRows.find((candidate) => candidate.key === blockKey) : undefined;
+    }
+    if (block?.kind === "placeholder") {
+      focusCanvasGhost(block.parentId);
+    } else if (block?.node.kind === "date") {
+      enterNode(block.node.id);
+    } else if (block && rowElement) {
+      focusNode(block.node.id, canvasCursorAtPoint(rowElement, clientX, clientY));
+    } else {
+      // The page-level ghost is the continuous canvas landing point after the last row.
+      focusCanvasGhost(rootId);
+    }
+  };
+
+  const onContentAreaPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.defaultPrevented) return;
+    if (view !== "today" && view !== "outline") return;
+    if (event.button !== 0) return;
+    if (draggingRef.current) return;
     const target = event.target;
     if (target instanceof Element && target.closest("button, input, label, a, [contenteditable='true'], .inline-editor, .hierarchy-line-hit")) return;
-    const rowElement = treeBlockAtPoint(treeListRef.current, event.clientX, event.clientY);
-    const blockKey = rowElement?.dataset.treeBlockKey;
-    const block = blockKey ? renderedRows.find((candidate) => candidate.key === blockKey) : undefined;
-    if (!block) return;
-    if (block.kind === "placeholder") {
-      focusGhost(block.parentId);
-    } else if (block.node.kind === "date") {
-      enterNode(block.node.id);
-    } else if (view !== "trash") {
-      focusNode(block.node.id, "end");
-    }
+    // Blank canvas clicks are custom focus transfers. Prevent the browser from
+    // blurring the current editor to the page before the target is resolved.
+    event.preventDefault();
+    resolveCanvasTarget(event.clientX, event.clientY);
   };
 
   useEffect(() => {
@@ -444,7 +487,14 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   };
 
   return (
-    <div ref={contentAreaRef} className={`content-area ${nodeSelection.selectedKeys.size ? "has-node-selection" : ""}`} {...nodeSelection.handlers}>
+    <div
+      ref={contentAreaRef}
+      tabIndex={-1}
+      className={`content-area ${view === "today" || view === "outline" ? "is-editable-canvas" : ""} ${nodeSelection.selectedKeys.size ? "has-node-selection" : ""}`}
+      onPointerDown={onContentAreaPointerDown}
+      {...nodeSelection.handlers}
+    >
+      <div className="content-canvas-inner">
       <section className="content-header">
         <div className="content-heading">
           <p className="eyebrow">{eyebrow(view)}</p>
@@ -488,7 +538,6 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
           className="tree-list"
           role="tree"
           aria-label="节点树"
-          onClick={onTreeListClick}
           data-debug-tree-list={layoutDebugVisibility.treeList || undefined}
           data-debug-collapse={layoutDebugVisibility.collapse || undefined}
           data-debug-bullet={layoutDebugVisibility.bullet || undefined}
@@ -613,8 +662,36 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
           ) : null}
         </DragOverlay>
       </DndContext>
+      </div>
     </div>
   );
+}
+
+function canvasCursorAtPoint(container: HTMLElement, clientX: number, clientY: number): number | "end" {
+  const editorHost = container.querySelector<HTMLElement>(".inline-editor");
+  const editor = editorHost ? EditorView.findFromDOM(editorHost) : null;
+  const surface = editorHost?.querySelector<HTMLElement>(".cm-content") ?? editorHost;
+  if (!editor || !surface) {
+    const rect = (surface ?? container).getBoundingClientRect();
+    return clientX <= (rect.left + rect.right) / 2 ? 0 : "end";
+  }
+
+  const rect = surface.getBoundingClientRect();
+  const x = clampToRect(clientX, rect.left, rect.right);
+  const y = clampToRect(clientY, rect.top, rect.bottom);
+  return editor.posAtCoords({ x, y }, false);
+}
+
+function clampToRect(value: number, start: number, end: number): number {
+  if (end <= start) return start;
+  const inset = Math.min(1, (end - start) / 2);
+  return Math.min(Math.max(value, start + inset), end - inset);
+}
+
+function verticalDistance(clientY: number, rect: DOMRect): number {
+  if (clientY < rect.top) return rect.top - clientY;
+  if (clientY > rect.bottom) return clientY - rect.bottom;
+  return 0;
 }
 
 function eyebrow(view: WorkspaceView): string {
