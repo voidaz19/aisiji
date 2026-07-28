@@ -11,6 +11,7 @@ interface TreeBlockBase {
 export interface PersistedTreeBlock extends TreeBlockBase {
   kind: "node";
   node: NodeRecord & { depth?: number };
+  hasChildren: boolean;
 }
 
 export interface PlaceholderTreeBlock extends TreeBlockBase {

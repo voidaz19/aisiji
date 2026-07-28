@@ -1,8 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { childrenOf, createNode, createSeedState, deleteSubtree, indentNode, isNodeExpanded, moveAfter, moveAsFirstChild, moveAsLastChild, outdentNode, restoreSubtree, toggleCollapsed, visibleNodes } from "./tree";
+import { buildChildIndex, childrenOf, createNode, createSeedState, deleteSubtree, indentNode, isNodeExpanded, moveAfter, moveAsFirstChild, moveAsLastChild, outdentNode, restoreSubtree, toggleCollapsed, visibleNodes } from "./tree";
+import type { NodeRecord, NotebookState } from "./model";
 import { ROOT_ID } from "./model";
 
 describe("tree domain", () => {
+  it("builds a reusable sorted child index without deleted nodes", () => {
+    const state = createSeedState("2026-07-20");
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const deleted = createNode(state, date.id, "deleted").node;
+    state.nodes[deleted.id] = { ...deleted, deletedAt: 1 };
+
+    const index = buildChildIndex(state);
+
+    expect(childrenOf(state, date.id, index).map((node) => node.markdown)).not.toContain("deleted");
+  });
+
   it("creates a visible date and child", () => {
     const state = createSeedState("2026-07-20");
     expect(visibleNodes(state, ROOT_ID)).toHaveLength(2);
@@ -151,5 +163,40 @@ describe("tree domain", () => {
     state = enterResult.state;
     const order = childrenOf(state, date.id).filter((node) => node.kind === "content").map((node) => node.id);
     expect(order).toEqual([first.id, enterResult.node.id, thirdResult.node.id]);
+  });
+});
+
+function largeTree(nodeCount: number): NotebookState {
+  const state = createSeedState("2026-07-20");
+  const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+  const createdAt = 1_700_000_000_000;
+  for (let index = 0; index < nodeCount; index += 1) {
+    const id = `large-${index}`;
+    const node: NodeRecord = {
+      id,
+      kind: "content",
+      parentId: index < 100 ? date.id : `large-${Math.floor((index - 100) / 10)}`,
+      sortKey: index * 1000,
+      markdown: `node ${index}`,
+      dateKey: null,
+      deletedAt: null,
+      revision: 1,
+      createdAt: createdAt + index,
+      updatedAt: createdAt + index,
+    };
+    state.nodes[id] = node;
+  }
+  return state;
+}
+
+describe("tree performance regression", () => {
+  it.each([1_000, 10_000])("flattens %i nodes with one explicit index build", (nodeCount) => {
+    const state = largeTree(nodeCount);
+    const startedAt = performance.now();
+    const result = visibleNodes(state, Object.values(state.nodes).find((node) => node.kind === "date")!.id);
+    const elapsed = performance.now() - startedAt;
+
+    expect(result).toHaveLength(nodeCount + 1);
+    expect(elapsed).toBeLessThan(2_000);
   });
 });

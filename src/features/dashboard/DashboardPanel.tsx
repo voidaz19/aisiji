@@ -10,15 +10,16 @@ interface Props {
 }
 
 export function DashboardPanel({ onNavigate, todayNode }: Props) {
-  const store = useNotebookStore();
+  const nodes = useNotebookStore((state) => state.nodes);
+  const openRoot = useNotebookStore((state) => state.openRoot);
   const todayCount = todayNode
-    ? Object.values(store.nodes).filter((node) => node.parentId === todayNode.id && !node.deletedAt).length
+    ? Object.values(nodes).filter((node) => node.parentId === todayNode.id && !node.deletedAt).length
     : 0;
-  const recentNodes = Object.values(store.nodes)
+  const recentNodes = Object.values(nodes)
     .filter((node) => node.kind === "content" && !node.deletedAt && node.markdown.trim())
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 8);
-  const totalNodes = Object.values(store.nodes).filter(
+  const totalNodes = Object.values(nodes).filter(
     (node) => node.kind === "content" && !node.deletedAt,
   ).length;
 
@@ -53,7 +54,7 @@ export function DashboardPanel({ onNavigate, todayNode }: Props) {
           <ul className="dash-recent">
             {recentNodes.map((node) => (
               <li key={node.id}>
-                <button type="button" className="dash-recent-item" onClick={() => { onNavigate("outline"); store.openRoot(node.id); }}>
+                <button type="button" className="dash-recent-item" onClick={() => { onNavigate("outline"); openRoot(node.id); }}>
                   <span className="dash-recent-text">{node.markdown.trim() || "未命名节点"}</span>
                   <span className="dash-recent-time">{relativeTimeLabel(node.updatedAt)}</span>
                 </button>

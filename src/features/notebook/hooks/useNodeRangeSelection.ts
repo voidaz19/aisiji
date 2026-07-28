@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { EditorView } from "@codemirror/view";
+import { treeBlockAtPoint } from "../../../components/treeHitTesting";
 import { expandSelectionToSubtrees, keysInRange, type NodeRangeSelection, type VisibleSelectionEntry } from "../../../domain/nodeSelection";
 import { useNotebookStore } from "../../../store/useNotebookStore";
 
@@ -11,14 +12,17 @@ interface DragState {
   nodeMode: boolean;
 }
 
-export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null>) {
+export function useNodeRangeSelection(
+  containerRef: RefObject<HTMLElement | null>,
+  logicalEntries?: readonly VisibleSelectionEntry[],
+) {
   const [selection, setSelection] = useState<NodeRangeSelection | null>(null);
   const drag = useRef<DragState | null>(null);
   const suppressClick = useRef(false);
   const removeNodes = useNotebookStore((state) => state.removeNodes);
   const nodes = useNotebookStore((state) => state.nodes);
 
-  const entries = selectionEntries(containerRef.current);
+  const entries = logicalEntries ?? selectionEntries(containerRef.current);
   const order = entries.map((entry) => entry.key);
   const entrySignature = entries.map((entry) => entry.key + ":" + entry.depth).join("\u0000");
   const explicitKeys = useMemo(
@@ -44,7 +48,8 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
       setSelection(null);
       return;
     }
-    const key = selectionKeyFromTarget(event.target);
+    const key = selectionKeyFromTarget(event.target)
+      ?? selectionKeyFromPoint(containerRef.current, event.clientX, event.clientY);
     setSelection(null);
     drag.current = null;
     if (!key) return;
@@ -55,7 +60,8 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
     const currentDrag = drag.current;
     if (!currentDrag || currentDrag.pointerId !== event.pointerId) return;
     const hit = document.elementFromPoint?.(event.clientX, event.clientY) ?? event.target;
-    const headKey = selectionKeyFromTarget(hit);
+    const headKey = selectionKeyFromTarget(hit)
+      ?? selectionKeyFromPoint(containerRef.current, event.clientX, event.clientY);
     if (!headKey) return;
 
     if (!currentDrag.nodeMode && headKey === currentDrag.anchorKey) return;
@@ -103,7 +109,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
   }, []);
 
   const onKeyDownCapture = useCallback((event: KeyboardEvent<HTMLElement>) => {
-    const currentOrder = rowOrder(containerRef.current);
+    const currentOrder = entries.map((entry) => entry.key);
     if (selection) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -113,7 +119,7 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
       if ((event.key === "Backspace" || event.key === "Delete") && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         event.stopPropagation();
-        const keys = expandedKeysInSelection(containerRef.current, selection);
+        const keys = expandedKeysInSelection(entries, selection);
         const fallback = deletionFallback(currentOrder, keys);
         removeNodes(keys, fallback);
         setSelection(null);
@@ -152,24 +158,21 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
       clearEditorSelections(containerRef.current);
       setSelection({ anchorKey: currentKey, headKey: nextKey });
     }
-  }, [clear, containerRef, removeNodes, selection]);
+  }, [clear, containerRef, entries, removeNodes, selection]);
 
   const selectedText = useCallback(() => {
     if (!selection) return "";
-    const keys = expandedKeysInSelection(containerRef.current, selection);
-    const rows = keys
-      .map((key) => containerRef.current?.querySelector<HTMLElement>(`[data-selection-key="${CSS.escape(key)}"]`))
-      .filter((row): row is HTMLElement => Boolean(row));
-    const depths = rows.map((row) => Number(row.dataset.depth ?? 0));
+    const keys = expandedKeysInSelection(entries, selection);
+    const depthByKey = new Map(entries.map((entry) => [entry.key, entry.depth]));
+    const depths = keys.map((key) => depthByKey.get(key) ?? 0);
     const baseDepth = depths.length ? Math.min(...depths) : 0;
-    return rows.map((row, index) => {
-      const key = row.dataset.selectionKey ?? "";
+    return keys.map((key, index) => {
       const node = nodes[key];
       const text = key.startsWith(GHOST_PREFIX) ? "" : (node?.kind === "date" ? node.dateKey : node?.markdown) ?? "";
       const depth = Math.max(0, depths[index] - baseDepth);
       return `${"  ".repeat(depth)}${text}`;
     }).join("\n");
-  }, [containerRef, nodes, selection]);
+  }, [entries, nodes, selection]);
 
   const onCopy = useCallback((event: ClipboardEvent<HTMLElement>) => {
     if (!selection) return;
@@ -183,13 +186,13 @@ export function useNodeRangeSelection(containerRef: RefObject<HTMLElement | null
     event.preventDefault();
     event.stopPropagation();
     event.clipboardData.setData("text/plain", selectedText());
-    const currentOrder = rowOrder(containerRef.current);
-    const keys = expandedKeysInSelection(containerRef.current, selection);
+    const currentOrder = entries.map((entry) => entry.key);
+    const keys = expandedKeysInSelection(entries, selection);
     const fallback = deletionFallback(currentOrder, keys);
     removeNodes(keys, fallback);
     setSelection(null);
     if (fallback) requestAnimationFrame(() => focusSelectionKey(containerRef.current, fallback));
-  }, [containerRef, removeNodes, selectedText, selection]);
+  }, [containerRef, entries, removeNodes, selectedText, selection]);
 
   const onBeforeInputCapture = useCallback((event: FormEvent<HTMLElement>) => {
     if (!selection) return;
@@ -226,15 +229,7 @@ function selectionEntries(container: HTMLElement | null): VisibleSelectionEntry[
     : [];
 }
 
-function rowOrder(container: HTMLElement | null): string[] {
-  return selectionEntries(container).map((entry) => entry.key);
-}
-
-function expandedKeysInSelection(
-  container: HTMLElement | null,
-  selection: NodeRangeSelection,
-): string[] {
-  const entries = selectionEntries(container);
+function expandedKeysInSelection(entries: readonly VisibleSelectionEntry[], selection: NodeRangeSelection): string[] {
   const explicitKeys = keysInRange(entries.map((entry) => entry.key), selection);
   return expandSelectionToSubtrees(entries, explicitKeys).keys;
 }
@@ -247,8 +242,12 @@ function selectionKeyFromTarget(target: EventTarget | null): string | null {
   return closestSelectionRow(target)?.dataset.selectionKey ?? null;
 }
 
+function selectionKeyFromPoint(container: HTMLElement | null, clientX: number, clientY: number): string | null {
+  return treeBlockAtPoint(container?.querySelector<HTMLElement>(".tree-list") ?? null, clientX, clientY)?.dataset.selectionKey ?? null;
+}
+
 function isInteractiveControl(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest("button, input, label, a"));
+  return target instanceof Element && Boolean(target.closest("button, input, label, a, .hierarchy-line-hit"));
 }
 
 function editorFromTarget(target: EventTarget | null): EditorView | null {

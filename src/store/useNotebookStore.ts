@@ -4,8 +4,10 @@ import { executeMoveNode, type MoveNodeIntent } from "../domain/commands/moveNod
 import { executeSplitNode } from "../domain/commands/splitNode";
 import { createSeedState, ensureDateNode, updateMarkdown, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
 import { newId, ROOT_ID, type AttachmentRecord, type NodeField, type Operation, type NotebookState } from "../domain/model";
-import { storeAttachment } from "../platform/attachments";
-import { appendNativeOperation, loadNativeWorkspace, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
+import { selectHydrationWorkspace } from "../domain/notebookState";
+import { purgeDeletedNodes } from "../domain/purgeDeletedNodes";
+import { deleteStoredAttachments, storeAttachment } from "../platform/attachments";
+import { awaitWorkspacePersistence, loadNativeWorkspace, maintainNativeDatabase, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
 import { localDateKey } from "../shared/date";
 import type { NotebookStore } from "./notebookStore.types";
 import { createOperation } from "./operationFactory";
@@ -22,8 +24,7 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
   const initial = readInitialState();
   if (!initial.attachments) initial.attachments = {};
   const commit = (next: NotebookState, operation?: Operation) => {
-    saveWorkspace(next);
-    if (operation) appendNativeOperation(operation);
+    saveWorkspace(next, operation);
     set({ ...next, pendingOperations: operation ? [...get().pendingOperations, operation] : get().pendingOperations });
   };
   const focusAfterNodeRemoval = (
@@ -63,9 +64,12 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
     ghostSuppressed: {},
     hydrate: async () => {
       try {
-        const persistedState = await loadNativeWorkspace();
+        const browserState = readBrowserWorkspace();
+        const nativeState = await loadNativeWorkspace();
+        const persistedState = selectHydrationWorkspace(browserState, nativeState);
         if (!persistedState) return;
         set({ ...persistedState, pendingOperations: [] });
+        if (persistedState === browserState && persistedState !== nativeState) saveWorkspace(persistedState);
       } catch {
         // Browser fallback and first-run native builds use the seed state.
       }
@@ -284,6 +288,21 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       }
     },
     restore: (nodeId) => commit(executeRestoreSubtree(get(), nodeId, Date.now()), createOperation("restore_subtree", nodeId, {})),
+    emptyTrash: async () => {
+      const result = purgeDeletedNodes(get());
+      if (!result.purgedNodeIds.length) return { purgedNodes: 0, purgedAttachments: 0 };
+      commit(result.state, createOperation("purge_deleted_nodes", ROOT_ID, { nodeIds: result.purgedNodeIds }));
+      set({
+        activeNodeId: result.state.nodes[get().activeNodeId ?? ""] ? get().activeNodeId : null,
+        activeRootId: result.state.nodes[get().activeRootId] ? get().activeRootId : ROOT_ID,
+        rootHistory: get().rootHistory.filter((nodeId) => Boolean(result.state.nodes[nodeId])),
+      });
+      await awaitWorkspacePersistence();
+      await deleteStoredAttachments(result.purgedAttachmentIds);
+      await maintainNativeDatabase();
+      return { purgedNodes: result.purgedNodeIds.length, purgedAttachments: result.purgedAttachmentIds.length };
+    },
+    maintainStorage: async () => (await maintainNativeDatabase())?.compactedOperations ?? 0,
     addField: (nodeId, key, type, value) => {
       const field: NodeField = { id: newId("field"), nodeId, key, type, value, updatedAt: Date.now() };
       const next = { ...get(), fields: { ...get().fields, [field.id]: field } };

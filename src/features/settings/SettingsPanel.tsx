@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Cloud, SlidersHorizontal } from "lucide-react";
+import { Cloud, Database, SlidersHorizontal, Trash2 } from "lucide-react";
 import { hasTauriRuntime } from "../../platform/runtime";
 import { probeWebDav, saveSyncCredentials, type SyncCredentials } from "../../platform/syncCredentials";
+import { useNotebookStore } from "../../store/useNotebookStore";
 
 const DEFAULT_ENDPOINT = "https://dav.jianguoyun.com/dav/";
 
@@ -13,6 +14,11 @@ export function SettingsPanel() {
   });
   const [status, setStatus] = useState("");
   const [testing, setTesting] = useState(false);
+  const [maintaining, setMaintaining] = useState(false);
+  const [maintenanceStatus, setMaintenanceStatus] = useState("");
+  const deletedNodeCount = useNotebookStore((state) => Object.values(state.nodes).filter((node) => Boolean(node.deletedAt)).length);
+  const emptyTrash = useNotebookStore((state) => state.emptyTrash);
+  const maintainStorage = useNotebookStore((state) => state.maintainStorage);
 
   const updateCredential = (key: keyof SyncCredentials, value: string) => {
     setCredentials((current) => ({ ...current, [key]: value }));
@@ -41,6 +47,32 @@ export function SettingsPanel() {
       setTesting(false);
     }
   };
+  const purgeTrash = async () => {
+    if (!deletedNodeCount) return;
+    if (!window.confirm(`将永久删除回收站中的 ${deletedNodeCount} 个节点及其关联数据。此操作无法撤销，是否继续？`)) return;
+    setMaintaining(true);
+    setMaintenanceStatus("正在清空回收站并整理数据库...");
+    try {
+      const result = await emptyTrash();
+      setMaintenanceStatus(`已永久删除 ${result.purgedNodes} 个节点和 ${result.purgedAttachments} 个附件。`);
+    } catch (error) {
+      setMaintenanceStatus(`清理失败：${String(error)}`);
+    } finally {
+      setMaintaining(false);
+    }
+  };
+  const compactDatabase = async () => {
+    setMaintaining(true);
+    setMaintenanceStatus("正在整理本地数据库...");
+    try {
+      const compacted = await maintainStorage();
+      setMaintenanceStatus(hasTauriRuntime() ? `数据库整理完成，压缩 ${compacted} 条冗余文本日志。` : "浏览器预览无需整理 SQLite 数据库。");
+    } catch (error) {
+      setMaintenanceStatus(`整理失败：${String(error)}`);
+    } finally {
+      setMaintaining(false);
+    }
+  };
 
   return (
     <div className="settings-page">
@@ -60,6 +92,15 @@ export function SettingsPanel() {
         <div className="section-title"><SlidersHorizontal size={19} /><div><h2>编辑偏好</h2><p>日期节点使用设备的固定工作区时区。Markdown 即时渲染保持单编辑区。</p></div></div>
         <div className="setting-row"><span>附件下载</span><span className="setting-value">按需下载，可固定离线</span></div>
         <div className="setting-row"><span>本地历史</span><span className="setting-value">长期保留</span></div>
+      </section>
+      <section className="settings-section">
+        <div className="section-title"><Database size={19} /><div><h2>本地存储维护</h2><p>无需打开回收站即可永久清理软删除数据，并压缩冗余文本编辑日志。</p></div></div>
+        <div className="setting-row"><span>回收站节点</span><span className="setting-value">{deletedNodeCount} 个</span></div>
+        <div className="settings-actions">
+          <button className="subtle-button" type="button" onClick={() => void compactDatabase()} disabled={maintaining}><Database size={15} />整理数据库</button>
+          <button className="danger-button" type="button" onClick={() => void purgeTrash()} disabled={maintaining || deletedNodeCount === 0}><Trash2 size={15} />清空回收站</button>
+        </div>
+        {maintenanceStatus && <p className="settings-status">{maintenanceStatus}</p>}
       </section>
     </div>
   );

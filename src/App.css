@@ -117,7 +117,7 @@ button { cursor: pointer; }
 
 /* topbar: 毛玻璃，无描边无阴影 */
 .topbar {
-  height: 40px; display: flex; align-items: center;
+  height: 40px; flex: 0 0 40px; display: flex; align-items: center;
   padding: 0 16px; gap: 10px;
   background: rgba(255,255,255,.82);
   backdrop-filter: blur(14px);
@@ -125,10 +125,14 @@ button { cursor: pointer; }
   -webkit-app-region: drag;
   app-region: drag;
 }
-/* 所有可点击子元素必须关闭拖拽，否则点击失效 */
-.topbar button, .topbar a, .topbar input, .topbar .breadcrumbs {
+/* 只有可点击元素关闭拖拽；中间的面包屑空白仍属于窗口拖拽区。 */
+.topbar button, .topbar a, .topbar input {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+.topbar .breadcrumbs {
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 .icon-button {
   display: inline-grid; place-items: center; width: 32px; height: 32px;
@@ -175,12 +179,12 @@ button { cursor: pointer; }
 .eyebrow { color: var(--ink-faint); text-transform: uppercase; letter-spacing: .1em; font-size: 10.5px; font-weight: 600; margin: 0 0 10px; }
 h1, h2, p { margin-top: 0; }
 h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 0; color: var(--ink); font-weight: 700; }
+.view-root-heading { width: 100%; min-width: 0; }
 .root-node-heading {
-  width: calc(100% - var(--tree-row-left-padding) - var(--tree-collapse-width) - var(--tree-row-right-padding));
-  min-width: 0;
-  margin-left: calc(var(--tree-row-left-padding) + var(--tree-collapse-width));
   transition: background .12s ease;
 }
+.notebook-host { min-width: 0; min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; overflow: hidden; }
+.notebook-host[hidden] { display: none; }
 .root-inline-editor { min-height: 35px; }
 .root-inline-editor .cm-content {
   padding: 0;
@@ -202,6 +206,12 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
               color .22s ease;
 }
 .subtle-button:hover { background: var(--surface-hover); color: var(--leaf); }
+.danger-button {
+  display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: var(--r-sm);
+  padding: 8px 13px; background: rgba(215, 122, 97, .12); color: #a84f3a; font-size: 13px; font-weight: 500;
+}
+.danger-button:hover:not(:disabled) { background: rgba(215, 122, 97, .22); }
+.subtle-button:disabled, .danger-button:disabled { opacity: .5; cursor: default; }
 
 /* 搜索框：胶囊形，surface-muted 填充 */
 .search-input {
@@ -218,7 +228,7 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .field-strip span { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-muted); background: var(--surface-muted); padding: 4px 9px; border-radius: var(--r-xs); font-size: 11.5px; }
 
 /* ── Tree ── */
-.tree-list { padding: 4px 0; min-height: 210px; position: relative; overflow: clip; }
+.tree-list { padding: 4px 0; min-height: 210px; position: relative; overflow: clip; cursor: text; }
 
 /* ── Shake Feedback Animation ── */
 @keyframes shake-node {
@@ -238,6 +248,7 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .hierarchy-line-group:hover .hierarchy-line, .hierarchy-line-hit:focus-visible + .hierarchy-line { stroke: color-mix(in srgb, var(--ink-faint) 72%, transparent); stroke-width: 5; outline: none; }
 
 .tree-row { min-height: var(--tree-row-height); display: flex; align-items: flex-start; gap: 0; border-radius: var(--r-xs); position: relative; margin-bottom: var(--tree-row-gap); padding-right: var(--tree-row-right-padding); background: transparent; }
+.tree-row.is-virtual-row { position: absolute; left: 0; }
 .tree-row.layout-gap-inside-subtree { margin-bottom: var(--tree-subtree-gap); }
 .tree-row.layout-gap-between-subtrees { margin-bottom: var(--tree-block-gap); }
 .tree-row.layout-gap-subtree-end { margin-bottom: calc(var(--tree-exit-gap, var(--tree-subtree-gap)) + var(--tree-block-gap)); }
@@ -346,6 +357,7 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .node-bullet.date-bullet { color: var(--leaf); }
 .node-content { flex: 1; min-width: 0; color: var(--ink); position: relative; z-index: 3; }
 .date-content { padding: 0; line-height: var(--tree-content-line-height); font-size: var(--tree-content-font-size); font-weight: 600; color: var(--ink-muted); }
+.node-readonly { min-height: var(--tree-row-height); line-height: var(--tree-content-line-height); font-size: var(--tree-content-font-size); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cm-editor ::selection { background: var(--leaf-soft); color: inherit; }
 .cm-selectionBackground { background: var(--leaf-soft) !important; }
 
@@ -359,6 +371,10 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .ghost-collapse, .ghost-bullet { pointer-events: none; }
 .ghost-bullet .node-dot { opacity: .38; }
 .inline-editor { width: 100%; min-height: var(--tree-row-height); border: 0; outline: 0; }
+.inline-editor-placeholder {
+  min-height: var(--tree-row-height); line-height: var(--tree-content-line-height);
+  font-size: var(--tree-content-font-size); white-space: pre-wrap; overflow-wrap: anywhere;
+}
 
 /* 拖拽预览保留原树的可见层级，只弱化内容本身。 */
 .drag-preview { width: 100%; color: var(--ink); font-size: var(--tree-content-font-size); line-height: var(--tree-content-line-height); opacity: .58; pointer-events: none; }
@@ -395,7 +411,7 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .setting-value { color: var(--ink-faint); }
 
 /* ── Dashboard ── */
-.dashboard { width: min(860px, calc(100% - 64px)); margin: 0 auto; padding: 48px 0 80px; overflow: auto; }
+.dashboard { width: min(860px, calc(100% - 64px)); min-height: 0; flex: 1 1 auto; margin: 0 auto; padding: 48px 0 80px; overflow: auto; }
 .dashboard-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 40px; }
 .dash-card {
   display: flex; align-items: flex-start; gap: 14px;

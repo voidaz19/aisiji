@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   DndContext,
   DragOverlay,
@@ -13,6 +14,7 @@ import {
 import { Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { flushSync } from "react-dom";
 import { TreeBlockRow } from "../../components/TreeRow";
+import { treeBlockAtPoint } from "../../components/treeHitTesting";
 import { treeBlockSubtreeKeys } from "../../components/treeBlock";
 import { InlineEditor } from "../../components/InlineEditor";
 import { createTreeDropSlots, type TreeDropSlot, type VisibleDropPlaceholder, type VisibleTreeNode } from "../../domain/dropSlots";
@@ -39,11 +41,12 @@ interface Props {
   rootId: string;
   visibleNodes: NodeRecord[];
   layoutDebug?: boolean;
+  isVisible?: boolean;
 }
 
 type MeasuredSubtreeBox = { rootId: string; depth: number; top: number; height: number; rootHeight: number };
 type MeasuredNodeBox = { key: string; depth: number; top: number; height: number };
-type MeasuredDropLayout = { slots: DropSlotLayout[]; sourceZone: DropRect | null };
+type MeasuredDropLayout = { slots: DropSlotLayout[]; sourceZone: DropRect | null; emptyZones: EmptyDropHitZone[] };
 type EmptyDropHit = { blockKey: string; target: EmptyNodeTarget };
 type EmptyDropHitZone = EmptyDropHit & DropRect;
 type DragPointer = { clientX: number; clientY: number };
@@ -54,8 +57,22 @@ type DropDebugLayout = {
   pointerY: number;
 };
 
-export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDebug = false }: Props) {
-  const store = useNotebookStore();
+const VIRTUALIZATION_THRESHOLD = 200;
+
+export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDebug = false, isVisible = true }: Props) {
+  const nodes = useNotebookStore((state) => state.nodes);
+  const fields = useNotebookStore((state) => state.fields);
+  const collapsed = useNotebookStore((state) => state.collapsed);
+  const ghostSuppressed = useNotebookStore((state) => state.ghostSuppressed);
+  const activeNodeId = useNotebookStore((state) => state.activeNodeId);
+  const query = useNotebookStore((state) => state.query);
+  const setQuery = useNotebookStore((state) => state.setQuery);
+  const toggleChildren = useNotebookStore((state) => state.toggleChildren);
+  const moveToSlot = useNotebookStore((state) => state.moveToSlot);
+  const moveToEmptyNode = useNotebookStore((state) => state.moveToEmptyNode);
+  const enterNode = useNotebookStore((state) => state.enterNode);
+  const focusNode = useNotebookStore((state) => state.focusNode);
+  const focusGhost = useNotebookStore((state) => state.focusGhost);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragPreviewLayout, setDragPreviewLayout] = useState<DragPreviewLayout | null>(null);
   const [dragPlaceholderOpacity, setDragPlaceholderOpacity] = useState(0);
@@ -71,28 +88,84 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   const dragOriginPointerRef = useRef<DragPointer | null>(null);
   const dragPointerRef = useRef<DragPointer | null>(null);
   const updateDropTargetRef = useRef<(pointer: DragPointer) => void>(() => undefined);
+  const dragLayoutRef = useRef<MeasuredDropLayout | null>(null);
+  const dragUpdateFrameRef = useRef<number | null>(null);
   const emptyDropTargetRef = useRef<EmptyDropHit | null>(null);
   const draggingRef = useRef(false);
   const treeListRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
-  const nodeSelection = useNodeRangeSelection(contentAreaRef);
-  const treeLayoutMotion = useTreeLayoutAnimation(treeListRef, [store.collapsed, store.nodes, visibleNodes, rootId]);
+  const renderedRows = useMemo(() => treeLayoutRows(
+    visibleNodes,
+    { nodes, collapsed },
+    ghostSuppressed,
+    view === "today" || view === "outline" ? rootId : null,
+  ), [collapsed, ghostSuppressed, nodes, rootId, view, visibleNodes]);
+  const logicalSelectionEntries = useMemo(
+    () => renderedRows.map((row) => ({ key: row.key, depth: row.depth })),
+    [renderedRows],
+  );
+  const nodeSelection = useNodeRangeSelection(contentAreaRef, logicalSelectionEntries);
+  const virtualized = renderedRows.length >= VIRTUALIZATION_THRESHOLD && dragId === null;
+  const rowVirtualizer = useVirtualizer({
+    count: renderedRows.length,
+    getScrollElement: () => contentAreaRef.current,
+    initialRect: { width: 860, height: 800 },
+    estimateSize: () => 31,
+    measureElement: (element) => {
+      const rect = element.getBoundingClientRect();
+      const marginBottom = Number.parseFloat(getComputedStyle(element).marginBottom) || 0;
+      return rect.height + marginBottom;
+    },
+    getItemKey: (index) => renderedRows[index]?.key ?? index,
+    overscan: 12,
+    enabled: virtualized,
+  });
+  const measuredVirtualItems = virtualized ? rowVirtualizer.getVirtualItems() : [];
+  const virtualItems = virtualized && measuredVirtualItems.length === 0
+    ? renderedRows.slice(0, 40).map((_, index) => ({ index, start: index * 31 }))
+    : measuredVirtualItems;
+  const rowsToRender = virtualized
+    ? virtualItems.map((item) => ({ row: renderedRows[item.index], index: item.index, item }))
+    : renderedRows.map((row, index) => ({ row, index, item: null }));
+
+  const onTreeListClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, label, a, [contenteditable='true'], .inline-editor, .hierarchy-line-hit")) return;
+    const rowElement = treeBlockAtPoint(treeListRef.current, event.clientX, event.clientY);
+    const blockKey = rowElement?.dataset.treeBlockKey;
+    const block = blockKey ? renderedRows.find((candidate) => candidate.key === blockKey) : undefined;
+    if (!block) return;
+    if (block.kind === "placeholder") {
+      focusGhost(block.parentId);
+    } else if (block.node.kind === "date") {
+      enterNode(block.node.id);
+    } else if (view !== "trash") {
+      focusNode(block.node.id, "end");
+    }
+  };
+
+  useEffect(() => {
+    if (!virtualized || !activeNodeId) return;
+    const index = renderedRows.findIndex((row) => row.key === activeNodeId);
+    if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: "auto" });
+  }, [activeNodeId, renderedRows, rowVirtualizer, virtualized]);
+  const layoutSignature = useMemo(
+    () => renderedRows.map((row) => `${row.kind}:${row.key}:${row.depth}:${row.kind === "node" && row.hasChildren ? 1 : 0}`).join("\u0000"),
+    [renderedRows],
+  );
+  const treeLayoutMotion = useTreeLayoutAnimation(treeListRef, [isVisible, layoutSignature, rootId]);
   const guideLines = useHierarchyGuides(
     treeListRef,
-    view === "today" || view === "outline",
-    [store.activeNodeId, store.collapsed, store.nodes, visibleNodes, rootId],
+    isVisible && (view === "today" || view === "outline"),
+    rootId,
+    [activeNodeId, isVisible, layoutSignature, rootId],
     treeLayoutMotion,
   );
   const selectionRootSignature = [...nodeSelection.selectionRootKeys].join("\u0000");
-  const renderedRows = treeLayoutRows(
-    visibleNodes,
-    store,
-    store.ghostSuppressed,
-    view === "today" || view === "outline" ? rootId : null,
-  );
   useLayoutEffect(() => {
     const container = treeListRef.current;
-    if (!container) {
+    if (!container || !isVisible) {
       setSubtreeBoxes([]);
       setNodeBoxes([]);
       setSelectionBoxes([]);
@@ -137,24 +210,26 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [layoutDebug, visibleNodes, store.collapsed, store.nodes, rootId, selectionRootSignature]);
+  }, [isVisible, layoutDebug, layoutSignature, rootId, selectionRootSignature]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 280, tolerance: 6 } }),
   );
   const activeFields = activeRoot
-    ? Object.values(store.fields).filter((field) => field.nodeId === activeRoot.id)
+    ? Object.values(fields).filter((field) => field.nodeId === activeRoot.id)
     : [];
   const dragPreview = dragId ? visibleDragPreview(visibleNodes, dragId) : [];
   const dragSourceKeys = dragId ? treeBlockSubtreeKeys(renderedRows, dragId) : new Set<string>();
 
   const measureDropLayout = (movingNodeId: string): MeasuredDropLayout => {
     const container = treeListRef.current;
-    if (!container) return { slots: [], sourceZone: null };
+    if (!container) return { slots: [], sourceZone: null, emptyZones: [] };
     const blockRects = new Map<string, { top: number; bottom: number; left: number; right: number }>();
     const anchorsByDepth = new Map<number, number>();
     const blockLeftsByDepth = new Map<number, number>();
     const blocksByKey = new Map(renderedRows.map((block) => [block.key, block]));
+    const state = useNotebookStore.getState();
+    const emptyZones: EmptyDropHitZone[] = [];
     for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
       const blockKey = row.dataset.treeBlockKey;
       if (!blockKey) continue;
@@ -176,6 +251,17 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       const bullet = row.querySelector<HTMLElement>(".node-bullet");
       if (!anchorsByDepth.has(depth) && bullet) {
         anchorsByDepth.set(depth, row.offsetLeft + bullet.offsetLeft + bullet.offsetWidth / 2);
+      }
+      const block = blocksByKey.get(blockKey);
+      if (block?.emptyTarget && canDropOnEmptyNode(state, movingNodeId, block.emptyTarget)) {
+        emptyZones.push({
+          blockKey: block.key,
+          target: block.emptyTarget,
+          top,
+          bottom: top + row.offsetHeight,
+          left: row.offsetLeft + objectLeft,
+          right: container.scrollWidth - 8,
+        });
       }
     }
     const endPlaceholder = blockRects.get(`ghost:${rootId}`);
@@ -200,7 +286,6 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
         }] as const]
         : [];
     }));
-    const state = useNotebookStore.getState();
     const slots = createTreeDropSlots(
       state,
       visibleNodes as VisibleTreeNode[],
@@ -216,37 +301,21 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
         hitLeftByDepth: blockLeftsByDepth,
       }),
       sourceZone: subtreeRects.get(movingNodeId) ?? blockRects.get(movingNodeId) ?? null,
+      emptyZones,
     };
   };
 
-  const updateDropTarget = (pointer: DragPointer) => {
+  const updateDropTargetNow = (pointer: DragPointer) => {
     const movingNodeId = activeDragIdRef.current;
     const container = treeListRef.current;
     if (!draggingRef.current || !movingNodeId || !container) return;
     const containerRect = container.getBoundingClientRect();
     const pointerY = pointer.clientY - containerRect.top;
-    const measured = measureDropLayout(movingNodeId);
+    const measured = dragLayoutRef.current ?? measureDropLayout(movingNodeId);
+    dragLayoutRef.current ??= measured;
     setDragPlaceholderOpacity(sourcePlaceholderOpacity(dragOriginPointerRef.current, pointer));
-    const state = useNotebookStore.getState();
-    const blocksByKey = new Map(renderedRows.map((block) => [block.key, block]));
     const pointerX = pointer.clientX - containerRect.left + container.scrollLeft;
-    const emptyZones: EmptyDropHitZone[] = [];
-    for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
-      const top = row.offsetTop;
-      const objectLeft = Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0;
-      const blockKey = row.dataset.treeBlockKey;
-      const block = blockKey ? blocksByKey.get(blockKey) : undefined;
-      if (block?.emptyTarget && canDropOnEmptyNode(state, movingNodeId, block.emptyTarget)) {
-        emptyZones.push({
-          blockKey: block.key,
-          target: block.emptyTarget,
-          top,
-          bottom: top + row.offsetHeight,
-          left: row.offsetLeft + objectLeft,
-          right: container.scrollWidth - 8,
-        });
-      }
-    }
+    const emptyZones = measured.emptyZones;
     const directTarget = emptyZones.find((zone) => (
       pointerY >= zone.top
       && pointerY <= zone.bottom
@@ -254,26 +323,42 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       && pointerX <= zone.right
     )) ?? null;
     emptyDropTargetRef.current = directTarget;
-    setEmptyDropTargetKey(directTarget?.blockKey ?? null);
+    setEmptyDropTargetKey((previous) => previous === (directTarget?.blockKey ?? null) ? previous : (directTarget?.blockKey ?? null));
     const next = directTarget ? null : closestDropSlot(
       measured.slots,
       { x: pointerX, y: pointerY },
       measured.sourceZone,
     );
-    setDropDebugLayout({
-      slots: measured.slots.filter((slot) => !slot.isNoop),
-      emptyZones,
-      noMove: noMoveZone(measured.slots, measured.sourceZone),
-      pointerY,
-    });
+    if (layoutDebug) {
+      setDropDebugLayout({
+        slots: measured.slots.filter((slot) => !slot.isNoop),
+        emptyZones,
+        noMove: noMoveZone(measured.slots, measured.sourceZone),
+        pointerY,
+      });
+    }
     dropSlotRef.current = next;
-    setDropIndicator(next);
+    setDropIndicator((previous) => previous?.id === next?.id
+      && previous?.top === next?.top
+      && previous?.left === next?.left ? previous : next);
   };
-  updateDropTargetRef.current = updateDropTarget;
+  const scheduleDropTargetUpdate = (pointer: DragPointer) => {
+    dragPointerRef.current = pointer;
+    if (dragUpdateFrameRef.current !== null) return;
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+      updateDropTargetNow(pointer);
+      return;
+    }
+    dragUpdateFrameRef.current = window.requestAnimationFrame(() => {
+      dragUpdateFrameRef.current = null;
+      const latest = dragPointerRef.current;
+      if (latest) updateDropTargetNow(latest);
+    });
+  };
+  updateDropTargetRef.current = scheduleDropTargetUpdate;
 
   useLayoutEffect(() => {
     const updatePointer = (pointer: DragPointer) => {
-      dragPointerRef.current = pointer;
       updateDropTargetRef.current(pointer);
     };
     const onPointerMove = (event: PointerEvent) => updatePointer({ clientX: event.clientX, clientY: event.clientY });
@@ -297,18 +382,23 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
 
   const onDragMove = (_event: DragMoveEvent) => {
     const pointer = dragPointerRef.current;
-    if (pointer) updateDropTarget(pointer);
+    if (pointer) scheduleDropTargetUpdate(pointer);
   };
 
   const onDragEnd = (event: DragEndEvent) => {
+    if (dragUpdateFrameRef.current !== null) {
+      cancelAnimationFrame(dragUpdateFrameRef.current);
+      dragUpdateFrameRef.current = null;
+      if (dragPointerRef.current) updateDropTargetNow(dragPointerRef.current);
+    }
     const slot = dropSlotRef.current;
     const directTarget = emptyDropTargetRef.current;
     const previewRects = measureDragPreviewRows();
     flushSync(() => {
       if (directTarget) {
-        store.moveToEmptyNode(String(event.active.id), directTarget.target);
+        moveToEmptyNode(String(event.active.id), directTarget.target);
       } else if (slot) {
-        store.moveToSlot(String(event.active.id), slot.parentId, slot.beforeId);
+        moveToSlot(String(event.active.id), slot.parentId, slot.beforeId);
       }
       resetDrag();
     });
@@ -316,6 +406,10 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   };
 
   const resetDrag = () => {
+    if (dragUpdateFrameRef.current !== null) {
+      cancelAnimationFrame(dragUpdateFrameRef.current);
+      dragUpdateFrameRef.current = null;
+    }
     draggingRef.current = false;
     setDragId(null);
     setDragPreviewLayout(null);
@@ -328,6 +422,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     activeDragIdRef.current = null;
     dragOriginPointerRef.current = null;
     dragPointerRef.current = null;
+    dragLayoutRef.current = null;
   };
 
   const onDragStart = (event: DragStartEvent) => {
@@ -344,7 +439,8 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       visibleDragPreview(visibleNodes, movingNodeId).map(({ node }) => node.id),
     ));
     setDragId(movingNodeId);
-    if (pointer) updateDropTarget(pointer);
+    dragLayoutRef.current = null;
+    if (pointer) scheduleDropTargetUpdate(pointer);
   };
 
   return (
@@ -354,7 +450,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
           <p className="eyebrow">{eyebrow(view)}</p>
           {activeRoot?.kind === "content" && view !== "search" && view !== "trash" ? (
             <div
-              className={`root-node-heading ${nodeSelection.selectionRootKeys.has(activeRoot.id) ? "is-node-selected" : ""}`}
+              className={`view-root-heading root-node-heading ${nodeSelection.selectionRootKeys.has(activeRoot.id) ? "is-node-selected" : ""}`}
               data-node-id={activeRoot.id}
               data-selection-key={activeRoot.id}
               data-depth={0}
@@ -363,11 +459,11 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
             >
               <InlineEditor nodeId={activeRoot.id} value={activeRoot.markdown} variant="root" />
             </div>
-          ) : <h1>{heading(view, activeRoot)}</h1>}
+          ) : <h1 className="view-root-heading">{heading(view, activeRoot)}</h1>}
         </div>
         {view === "search" && (
           <div className="header-tools">
-            <div className="search-input"><Search size={16} /><input autoFocus value={store.query} onChange={(event) => store.setQuery(event.target.value)} placeholder="搜索节点内容" /></div>
+            <div className="search-input"><Search size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点内容" /></div>
           </div>
         )}
       </section>
@@ -392,6 +488,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
           className="tree-list"
           role="tree"
           aria-label="节点树"
+          onClick={onTreeListClick}
           data-debug-tree-list={layoutDebugVisibility.treeList || undefined}
           data-debug-collapse={layoutDebugVisibility.collapse || undefined}
           data-debug-bullet={layoutDebugVisibility.bullet || undefined}
@@ -402,6 +499,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
             "--tree-layout-animation-duration": `${TREE_LAYOUT_ANIMATION_DURATION}ms`,
             "--tree-layout-animation-easing": TREE_LAYOUT_ANIMATION_EASING,
             "--drag-source-opacity": dragPlaceholderOpacity,
+            ...(virtualized ? { height: rowVirtualizer.getTotalSize() } : {}),
           } as CSSProperties}
         >
           {selectionBoxes.length > 0 && <div className="selection-subtree-overlay" aria-hidden="true">
@@ -420,7 +518,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
               const path = `M ${line.x} ${line.y1} V ${line.y2}`;
               return (
                   <g key={line.id} data-hierarchy-node-id={line.id} className="hierarchy-line-group" style={{ opacity: line.opacity ?? 1 }}>
-                  <path className="hierarchy-line-hit" d={path} stroke="transparent" strokeWidth={10} onClick={() => store.toggleChildren(line.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); store.toggleChildren(line.id); } }} tabIndex={0} role="button" aria-label="折叠或展开下一级节点" />
+                  <path className="hierarchy-line-hit" d={path} stroke="transparent" strokeWidth={10} onClick={() => toggleChildren(line.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleChildren(line.id); } }} tabIndex={0} role="button" aria-label="折叠或展开下一级节点" />
                   <path className="hierarchy-line" d={path} aria-hidden="true" />
                 </g>
               );
@@ -468,17 +566,23 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
             <div className="drag-pointer-marker" style={{ top: dropDebugLayout.pointerY }} aria-hidden="true"><span>鼠标命中基准</span></div>
           )}
           {dropIndicator && <div className="tree-drop-indicator" style={{ top: dropIndicator.top, left: dropIndicator.left }} aria-hidden="true" />}
-          {renderedRows.map((row, index) => {
+          {rowsToRender.map(({ row, index, item }) => {
             const layoutGap = visibleLayoutGap(renderedRows, index);
             const subtreeExitCount = visibleSubtreeExitCount(renderedRows, index);
             return <TreeBlockRow
               key={row.key}
               block={row}
+              virtualIndex={item?.index}
+              virtualTop={item?.start}
+              measureRef={item ? rowVirtualizer.measureElement : undefined}
+              navigationPreviousKey={editableRowKey(renderedRows, index, -1)}
+              navigationNextKey={editableRowKey(renderedRows, index, 1)}
               layoutGap={layoutGap}
               subtreeExitCount={subtreeExitCount}
               selected={nodeSelection.selectionRootKeys.has(row.key)}
               hasSubtreeSelection={row.kind === "node" && selectionBoxes.some((box) => box.rootId === row.key)}
               dragDisabled={view === "search" || view === "trash"}
+              readOnly={view === "trash"}
               sourcePlaceholder={dragSourceKeys.has(row.key)}
               emptyDropTarget={emptyDropTargetKey === row.key}
             />;
@@ -587,4 +691,16 @@ function animateDroppedRows(previewPositions: ReadonlyMap<string, DragPreviewPos
 
 function EmptyState() {
   return <div className="empty-state"><div className="empty-icon"><Trash2 size={22} /></div><h2>回收站为空</h2><p>删除的内容会在这里保留，方便恢复。</p></div>;
+}
+
+function editableRowKey(
+  rows: readonly ReturnType<typeof treeLayoutRows>[number][],
+  index: number,
+  direction: -1 | 1,
+): string | undefined {
+  for (let cursor = index + direction; cursor >= 0 && cursor < rows.length; cursor += direction) {
+    const row = rows[cursor];
+    if (row.kind === "placeholder" || row.node.kind === "content") return row.key;
+  }
+  return undefined;
 }

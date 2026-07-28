@@ -16,7 +16,7 @@ function node(id: string, parentId: string, depth: number): Extract<TreeBlock, {
     updatedAt: 1,
     depth,
   };
-  return { kind: "node", key: id, parentId, depth, node: record, emptyTarget: null };
+  return { kind: "node", key: id, parentId, depth, node: record, hasChildren: false, emptyTarget: null };
 }
 
 describe("tree block behavior model", () => {

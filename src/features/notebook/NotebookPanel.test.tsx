@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ROOT_ID } from "../../domain/model";
+import { ROOT_ID, type NodeRecord } from "../../domain/model";
 import { visibleNodes } from "../../domain/tree";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { NotebookPanel } from "./NotebookPanel";
@@ -36,7 +36,96 @@ function dragTo(target: Element): void {
   });
 }
 
+function box(left: number, top: number, right: number, bottom: number): DOMRect {
+  return { left, top, right, bottom, x: left, y: top, width: right - left, height: bottom - top, toJSON: () => ({}) } as DOMRect;
+}
+
+describe("NotebookPanel root heading", () => {
+  it("uses the same full-width heading contract for date and content roots", () => {
+    const state = useNotebookStore.getState();
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const content = Object.values(state.nodes).find((node) => node.kind === "content")!;
+    const { container, rerender } = render(
+      <NotebookPanel
+        view="outline"
+        activeRoot={date}
+        rootId={date.id}
+        visibleNodes={visibleNodes(state, date.id)}
+      />,
+    );
+
+    expect(container.querySelector("h1.view-root-heading")).not.toBeNull();
+
+    rerender(
+      <NotebookPanel
+        view="outline"
+        activeRoot={content}
+        rootId={content.id}
+        visibleNodes={visibleNodes(state, content.id)}
+      />,
+    );
+
+    expect(container.querySelector(".root-node-heading.view-root-heading")).not.toBeNull();
+  });
+});
+
 describe("NotebookPanel node range selection", () => {
+  it("windows a large outline instead of mounting every row", async () => {
+    const state = useNotebookStore.getState();
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const nodes: NodeRecord[] = [];
+    for (let index = 0; index < 1_000; index += 1) {
+      nodes.push({
+        id: `virtual-${index}`,
+        kind: "content",
+        parentId: date.id,
+        sortKey: index * 1_000,
+        markdown: `virtual row ${index}`,
+        dateKey: null,
+        deletedAt: null,
+        revision: 1,
+        createdAt: index + 1,
+        updatedAt: index + 1,
+        depth: 0,
+      } as NodeRecord & { depth: number });
+    }
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(860);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const height = this.classList.contains("tree-row") ? 31 : 600;
+      return { x: 0, y: 0, top: 0, right: 860, bottom: height, left: 0, width: 860, height, toJSON: () => ({}) };
+    });
+
+    const { container } = render(
+      <NotebookPanel view="outline" activeRoot={null} rootId={date.id} visibleNodes={nodes} />,
+    );
+
+    await vi.waitFor(() => expect(container.querySelectorAll("[data-tree-row='true']").length).toBeGreaterThan(0));
+    expect(container.querySelectorAll("[data-tree-row='true']").length).toBeLessThan(100);
+    expect(container.querySelector<HTMLElement>(".tree-list")!.style.height).not.toBe("");
+  });
+
+  it("renders deleted nodes without mounting CodeMirror editors", () => {
+    const store = useNotebookStore.getState();
+    const content = Object.values(store.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    store.editMarkdown(content.id, "deleted note");
+    store.remove(content.id);
+    const state = useNotebookStore.getState();
+    const deletedNodes = Object.values(state.nodes).filter((node) => Boolean(node.deletedAt));
+
+    const { container } = render(
+      <NotebookPanel
+        view="trash"
+        activeRoot={null}
+        rootId={ROOT_ID}
+        visibleNodes={deletedNodes}
+      />,
+    );
+
+    expect(container.querySelectorAll(".inline-editor")).toHaveLength(0);
+    expect(container.querySelector(".node-readonly")?.textContent).toBe("deleted note");
+  });
+
   it("separates selected root rows from the selected parent subtree", () => {
     const state = useNotebookStore.getState();
     const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
@@ -57,6 +146,34 @@ describe("NotebookPanel node range selection", () => {
     expect(dateRow.classList.contains("is-node-selected")).toBe(true);
     expect(childGhostRow.classList.contains("is-node-selected")).toBe(false);
     expect(ghostRow.classList.contains("is-node-selected")).toBe(true);
+  });
+
+  it("routes tree-list whitespace clicks to the nearest block", () => {
+    const state = useNotebookStore.getState();
+    const content = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.getState().setActiveNode(null);
+    const { container } = renderOutline();
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const contentIndex = rows.findIndex((row) => row.dataset.nodeId === content.id);
+    const contentTop = 4 + contentIndex * 32;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("tree-list")) return box(0, 0, 860, 200);
+      const rowIndex = rows.indexOf(this);
+      if (rowIndex >= 0) return box(0, 4 + rowIndex * 32, 860, 28 + rowIndex * 32);
+      return box(0, 0, 0, 0);
+    });
+    rows.forEach((row) => { row.style.marginBottom = "8px"; });
+
+    fireEvent.click(treeList, { clientX: 700, clientY: contentTop + 26 });
+
+    expect(useNotebookStore.getState().activeNodeId).toBe(content.id);
+    useNotebookStore.getState().setActiveNode(null);
+    const ghostIndex = rows.findIndex((row) => row.dataset.selectionKey === `ghost:${ROOT_ID}`);
+
+    fireEvent.click(treeList, { clientX: 700, clientY: 4 + ghostIndex * 32 + 26 });
+
+    expect(useNotebookStore.getState().activeGhostParentId).toBe(ROOT_ID);
   });
 
   it("keeps a selected empty parent subtree box around its ghost row", () => {
@@ -106,6 +223,80 @@ describe("NotebookPanel node range selection", () => {
 
     expect(rootGhostRow.classList.contains("layout-gap-between-subtrees")).toBe(true);
     expect(rootGhostRow.classList.contains("layout-gap-subtree-end")).toBe(false);
+  });
+
+  it("draws a hierarchy line for the current view root", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("node-bullet") ? 32 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("node-bullet") ? 20 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (this: HTMLElement) {
+      const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-tree-row='true']"));
+      const index = rows.indexOf(this);
+      return index >= 0 ? index * 32 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.dataset.treeRow === "true" ? 24 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const row = this.closest<HTMLElement>("[data-tree-row='true']");
+      const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-tree-row='true']"));
+      const rowTop = row ? Math.max(0, rows.indexOf(row)) * 32 : 0;
+      const isDot = this.classList.contains("node-dot");
+      const left = isDot ? 39 : 0;
+      const width = isDot ? 6 : 860;
+      const height = isDot ? 6 : 24;
+      const top = isDot ? rowTop + 9 : rowTop;
+      return { x: left, y: top, top, right: left + width, bottom: top + height, left, width, height, toJSON: () => ({}) };
+    });
+
+    const { container } = renderOutline();
+    const rootGuide = container.querySelector<SVGGElement>(`[data-hierarchy-node-id="${ROOT_ID}"]`);
+
+    expect(rootGuide).not.toBeNull();
+    expect(rootGuide?.querySelector(".hierarchy-line")?.getAttribute("d")).toMatch(/^M 14 3 V /);
+  });
+
+  it("keeps the root hierarchy line when its only child is the new-node placeholder", () => {
+    const state = useNotebookStore.getState();
+    const content = Object.values(state.nodes).find((node) => node.kind === "content" && !node.deletedAt)!;
+    useNotebookStore.setState({
+      nodes: Object.fromEntries(Object.entries(state.nodes).filter(([, node]) => (
+        node.id === ROOT_ID || node.id === content.id
+      ))),
+      collapsed: { [content.id]: false },
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("node-bullet") ? 32 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("node-bullet") ? 20 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.dataset.treeRow === "true" ? 24 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const isDot = this.classList.contains("node-dot");
+      const left = isDot ? 39 : 0;
+      const width = isDot ? 6 : 860;
+      const height = isDot ? 6 : 24;
+      const top = isDot ? 9 : 0;
+      return { x: left, y: top, top, right: left + width, bottom: top + height, left, width, height, toJSON: () => ({}) };
+    });
+
+    const { container } = render(
+      <NotebookPanel
+        view="outline"
+        activeRoot={content}
+        rootId={content.id}
+        visibleNodes={[]}
+      />,
+    );
+
+    expect(container.querySelector(`[data-hierarchy-node-id="${content.id}"]`)).not.toBeNull();
+    expect(container.querySelector(`[data-selection-key="ghost:${content.id}"]`)).not.toBeNull();
   });
 
   it("draws one debug block for every rendered node row", () => {

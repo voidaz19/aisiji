@@ -4,6 +4,28 @@ import { normalizeNotebookState } from "../domain/notebookState";
 import { hasTauriRuntime } from "./runtime";
 
 const STORAGE_KEY = "aisiji-notebook-state-v1";
+const NATIVE_WRITE_DELAY_MS = 180;
+
+interface NativeOperationPayload {
+  operationJson: string;
+  opId: string;
+  deviceId: string;
+  sequence: number;
+}
+
+export interface DatabaseMaintenanceReport {
+  operationsBefore: number;
+  operationsAfter: number;
+  compactedOperations: number;
+  databaseBytesBefore: number;
+  databaseBytesAfter: number;
+}
+
+let queuedStateJson: string | null = null;
+let queuedOperations: NativeOperationPayload[] = [];
+let nativeWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let nativeWriteInFlight = false;
+let nativeWritePromise: Promise<void> | null = null;
 
 export function readBrowserWorkspace(): NotebookState | null {
   try {
@@ -14,7 +36,7 @@ export function readBrowserWorkspace(): NotebookState | null {
   }
 }
 
-export function saveWorkspace(state: NotebookState): void {
+export function saveWorkspace(state: NotebookState, operation?: Operation): void {
   const stateJson = JSON.stringify(normalizeNotebookState(state));
   try {
     localStorage.setItem(STORAGE_KEY, stateJson);
@@ -22,7 +44,9 @@ export function saveWorkspace(state: NotebookState): void {
     // Native persistence remains available when browser storage is unavailable.
   }
   if (hasTauriRuntime()) {
-    void invoke("save_workspace", { stateJson }).catch(() => undefined);
+    queuedStateJson = stateJson;
+    if (operation) queuedOperations.push(nativeOperationPayload(operation));
+    scheduleNativeWrite();
   }
 }
 
@@ -34,12 +58,72 @@ export async function loadNativeWorkspace(): Promise<NotebookState | null> {
     : null;
 }
 
-export function appendNativeOperation(operation: Operation): void {
+export function flushWorkspacePersistence(): void {
+  if (!hasTauriRuntime() || nativeWriteInFlight || queuedStateJson === null) return;
+  if (nativeWriteTimer !== null) {
+    clearTimeout(nativeWriteTimer);
+    nativeWriteTimer = null;
+  }
+  void drainNativeWriteQueue();
+}
+
+/** Flushes every queued native snapshot before a destructive follow-up action. */
+export async function awaitWorkspacePersistence(): Promise<void> {
   if (!hasTauriRuntime()) return;
-  void invoke("append_operation", {
+  if (nativeWriteTimer !== null) {
+    clearTimeout(nativeWriteTimer);
+    nativeWriteTimer = null;
+  }
+  while (nativeWriteInFlight || queuedStateJson !== null) {
+    if (nativeWritePromise) await nativeWritePromise;
+    else await drainNativeWriteQueue(true);
+  }
+}
+
+export async function maintainNativeDatabase(): Promise<DatabaseMaintenanceReport | null> {
+  if (!hasTauriRuntime()) return null;
+  return invoke<DatabaseMaintenanceReport>("maintain_database");
+}
+
+function nativeOperationPayload(operation: Operation): NativeOperationPayload {
+  return {
     operationJson: JSON.stringify(operation),
     opId: operation.opId,
     deviceId: operation.deviceId,
     sequence: operation.sequence,
-  }).catch(() => undefined);
+  };
+}
+
+function scheduleNativeWrite(delay = NATIVE_WRITE_DELAY_MS): void {
+  if (nativeWriteTimer !== null || nativeWriteInFlight) return;
+  nativeWriteTimer = setTimeout(() => {
+    nativeWriteTimer = null;
+    void drainNativeWriteQueue();
+  }, delay);
+}
+
+async function drainNativeWriteQueue(throwOnError = false): Promise<void> {
+  if (nativeWritePromise) return nativeWritePromise;
+  if (queuedStateJson === null) return;
+  const stateJson = queuedStateJson;
+  const operations = queuedOperations;
+  queuedStateJson = null;
+  queuedOperations = [];
+  nativeWriteInFlight = true;
+  nativeWritePromise = (async () => {
+    let retryDelay: number | undefined;
+    try {
+      await invoke("save_workspace_batch", { stateJson, operations });
+    } catch (error) {
+      queuedStateJson ??= stateJson;
+      queuedOperations = [...operations, ...queuedOperations];
+      retryDelay = 1000;
+      if (throwOnError) throw error;
+    } finally {
+      nativeWriteInFlight = false;
+      nativeWritePromise = null;
+      if (queuedStateJson !== null) scheduleNativeWrite(retryDelay);
+    }
+  })();
+  return nativeWritePromise;
 }

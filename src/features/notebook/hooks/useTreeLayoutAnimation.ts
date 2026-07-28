@@ -29,8 +29,8 @@ export function useTreeLayoutAnimation(
     motion.current = null;
 
     const captureStableBaseline = () => {
-      // CodeMirror mounts its editor DOM in a regular effect. Capture a new
-      // baseline after that pass whenever rows are added or removed.
+      // Capture a stable baseline on the next frame whenever rows are added
+      // or removed, after editor DOM and browser layout have settled.
       if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
         const frame = window.requestAnimationFrame(() => {
           previousRows.current = measureRows(container).currentRows;

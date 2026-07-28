@@ -3,6 +3,7 @@ import { prefersReducedMotion, type TreeLayoutMotion } from "./useTreeLayoutAnim
 import { hierarchyGuideVerticalRange, stableRowLayoutCoordinate } from "../model/hierarchyGuideLayout";
 import { subtreeBottomInset } from "../model/subtreeLayout";
 import { TREE_LAYOUT_ANIMATION_DURATION, treeLayoutMotionProgress } from "../model/treeLayoutMotion";
+import { TREE_LEVEL_INDENT } from "../../../shared/treeLayout";
 
 export interface GuideLine {
   id: string;
@@ -111,6 +112,7 @@ function visualObjectRect(row: HTMLElement, containerTop: number): { dotObject: 
 export function useHierarchyGuides(
   containerRef: RefObject<HTMLDivElement | null>,
   enabled: boolean,
+  rootId: string,
   dependencies: readonly unknown[],
   treeMotion: RefObject<TreeLayoutMotion | null>,
 ): GuideLine[] {
@@ -197,6 +199,22 @@ export function useHierarchyGuides(
           };
         });
       const lines: GuideLine[] = [];
+      const firstRootChild = entries.find((entry) => (
+        entry.depth === 0 && entry.parentId === rootId && entry.measured
+      ));
+      const lastRootEntry = entries[entries.length - 1];
+      if (firstRootChild && lastRootEntry) {
+        const endRowBottom = containerRect.top + lastRootEntry.row.offsetTop + lastRootEntry.row.offsetHeight;
+        const { y1, y2 } = hierarchyGuideVerticalRange({
+          parentBottom: containerRect.top,
+          subtreeBottom: endRowBottom + subtreeBottomInset(-1, lastRootEntry.depth, subtreeEdge),
+          containerTop: containerRect.top,
+        });
+        const childAnchor = layoutGuideAnchor(firstRootChild.row, container);
+        if (childAnchor !== null && y2 > y1) {
+          lines.push({ id: rootId, x: childAnchor - TREE_LEVEL_INDENT, y1, y2 });
+        }
+      }
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
         if (entry.placeholder || !entry.measured) continue;

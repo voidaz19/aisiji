@@ -1,8 +1,7 @@
-import { useMemo, type CSSProperties } from "react";
+import { memo, type CSSProperties, type RefCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronDown, ChevronRight, Circle, Paperclip } from "lucide-react";
-import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP, type TreeLayoutGap } from "../shared/treeLayout";
 import { GhostEditor } from "./GhostEditor";
@@ -18,6 +17,12 @@ interface Props {
   subtreeExitCount?: number;
   sourcePlaceholder?: boolean;
   emptyDropTarget?: boolean;
+  readOnly?: boolean;
+  virtualIndex?: number;
+  virtualTop?: number;
+  measureRef?: RefCallback<HTMLElement>;
+  navigationPreviousKey?: string;
+  navigationNextKey?: string;
 }
 
 type SortableBehavior = Pick<
@@ -25,12 +30,15 @@ type SortableBehavior = Pick<
   "attributes" | "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"
 >;
 
-export function TreeBlockRow(props: Props) {
+export const TreeBlockRow = memo(function TreeBlockRow(props: Props) {
   if (props.block.kind === "placeholder") {
     return <TreeBlockFrame {...props} />;
   }
+  if (props.dragDisabled) {
+    return <TreeBlockFrame {...props} block={props.block} />;
+  }
   return <SortableTreeBlockRow {...props} block={props.block} />;
-}
+}, treeBlockRowPropsEqual);
 
 function SortableTreeBlockRow(props: Props & { block: Extract<TreeBlock, { kind: "node" }> }) {
   const sortable = useSortable({
@@ -48,22 +56,25 @@ function TreeBlockFrame({
   subtreeExitCount = 0,
   sourcePlaceholder = false,
   emptyDropTarget = false,
+  readOnly = false,
   sortable,
+  virtualIndex,
+  virtualTop,
+  measureRef,
+  navigationPreviousKey,
+  navigationNextKey,
 }: Props & { sortable?: SortableBehavior }) {
-  const nodes = useNotebookStore((state) => state.nodes);
   const collapsed = useNotebookStore((state) => block.kind === "node" ? state.collapsed[block.node.id] : undefined);
   const toggleNode = useNotebookStore((state) => state.toggleNode);
   const enterNode = useNotebookStore((state) => state.enterNode);
   const addAttachment = useNotebookStore((state) => state.addAttachment);
   const node = block.kind === "node" ? block.node : null;
-  const children = useMemo(
-    () => node ? childrenOf({ nodes, fields: {}, attachments: {}, collapsed: {} }, node.id) : [],
-    [nodes, node],
-  );
-  const isExpanded = node ? collapsed === false || (collapsed === undefined && children.length > 0) : false;
+  const hasChildren = block.kind === "node" && block.hasChildren;
+  const isExpanded = node ? collapsed === false || (collapsed === undefined && hasChildren) : false;
   const isEmptyContent = node?.kind === "content" && node.markdown.trim().length === 0;
   const className = [
     "tree-row",
+    virtualTop !== undefined ? "is-virtual-row" : "",
     block.kind === "placeholder" ? "ghost-child" : "",
     `layout-gap-${layoutGap}`,
     selected ? "is-node-selected" : "",
@@ -78,11 +89,19 @@ function TreeBlockFrame({
     paddingLeft: `${TREE_ROW_LEFT_PADDING + block.depth * TREE_LEVEL_INDENT}px`,
     "--tree-object-left": `${TREE_ROW_LEFT_PADDING + TREE_COLLAPSE_WIDTH + block.depth * TREE_LEVEL_INDENT}px`,
     "--tree-exit-gap": `${subtreeExitCount * TREE_SUBTREE_GAP}px`,
+    ...(virtualTop !== undefined ? { top: virtualTop, width: "100%" } : {}),
   } as CSSProperties;
 
+  const setRowRef = (element: HTMLElement | null) => {
+    sortable?.setNodeRef(element);
+    measureRef?.(element);
+  };
   return (
     <div
-      ref={sortable?.setNodeRef}
+      ref={setRowRef}
+      data-index={virtualIndex}
+      data-navigation-previous-key={navigationPreviousKey}
+      data-navigation-next-key={navigationNextKey}
       data-tree-row="true"
       data-tree-block-key={block.key}
       data-tree-block-kind={block.kind}
@@ -108,7 +127,7 @@ function TreeBlockFrame({
       {node ? (
         <button
           ref={sortable?.setActivatorNodeRef}
-          className={`node-bullet ${node.kind === "date" ? "date-bullet" : ""} ${isEmptyContent ? "empty-node-bullet" : ""} ${children.length > 0 && !isExpanded ? "has-collapsed-children" : ""}`}
+          className={`node-bullet ${node.kind === "date" ? "date-bullet" : ""} ${isEmptyContent ? "empty-node-bullet" : ""} ${hasChildren && !isExpanded ? "has-collapsed-children" : ""}`}
           type="button"
           onClick={() => enterNode(node.id)}
           {...sortable?.listeners}
@@ -127,12 +146,14 @@ function TreeBlockFrame({
       <div className="node-content">
         {node
           ? node.kind !== "date"
-            ? <InlineEditor nodeId={node.id} value={node.markdown} />
+            ? readOnly
+              ? <div className="node-readonly">{node.markdown || "未命名节点"}</div>
+              : <InlineEditor nodeId={node.id} value={node.markdown} />
             : <div className="date-content">{node.dateKey}</div>
           : <GhostEditor parentId={block.parentId} />}
       </div>
 
-      {node?.kind === "content" && (
+      {node?.kind === "content" && !readOnly && (
         <label className="row-attachment" aria-label="添加附件">
           <Paperclip size={14} />
           <input
@@ -148,4 +169,33 @@ function TreeBlockFrame({
       )}
     </div>
   );
+}
+
+function treeBlockRowPropsEqual(previous: Props, next: Props): boolean {
+  if (
+    previous.selected !== next.selected
+    || previous.hasSubtreeSelection !== next.hasSubtreeSelection
+    || previous.dragDisabled !== next.dragDisabled
+    || previous.layoutGap !== next.layoutGap
+    || previous.subtreeExitCount !== next.subtreeExitCount
+    || previous.sourcePlaceholder !== next.sourcePlaceholder
+    || previous.emptyDropTarget !== next.emptyDropTarget
+    || previous.readOnly !== next.readOnly
+    || previous.virtualIndex !== next.virtualIndex
+    || previous.virtualTop !== next.virtualTop
+    || previous.measureRef !== next.measureRef
+    || previous.navigationPreviousKey !== next.navigationPreviousKey
+    || previous.navigationNextKey !== next.navigationNextKey
+    || previous.block.kind !== next.block.kind
+    || previous.block.key !== next.block.key
+    || previous.block.parentId !== next.block.parentId
+    || previous.block.depth !== next.block.depth
+  ) return false;
+  if (previous.block.kind === "placeholder" || next.block.kind === "placeholder") return true;
+  return previous.block.hasChildren === next.block.hasChildren
+    && previous.block.node.revision === next.block.node.revision
+    && previous.block.node.deletedAt === next.block.node.deletedAt
+    && previous.block.node.kind === next.block.node.kind
+    && previous.block.node.markdown === next.block.node.markdown
+    && previous.block.node.dateKey === next.block.node.dateKey;
 }

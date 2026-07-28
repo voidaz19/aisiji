@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -19,6 +19,9 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | undefined>(undefined);
   const syncingValue = useRef(false);
+  const [nearViewport, setNearViewport] = useState(
+    variant === "root" || typeof IntersectionObserver === "undefined",
+  );
   const editMarkdown = useNotebookStore((state) => state.editMarkdown);
   const setActiveNode = useNotebookStore((state) => state.setActiveNode);
   const createSibling = useNotebookStore((state) => state.createSibling);
@@ -31,9 +34,21 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
   const remove = useNotebookStore((state) => state.remove);
   const isActiveNode = useNotebookStore((state) => state.activeNodeId === nodeId);
   const activeNodeCursor = useNotebookStore((state) => state.activeNodeCursor);
+  const shouldMountEditor = variant === "root" || isActiveNode || nearViewport;
 
   useEffect(() => {
-    if (!host.current) return;
+    const element = host.current;
+    if (!element || variant === "root" || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setNearViewport(entry.isIntersecting),
+      { root: element.closest(".content-area"), rootMargin: "600px 0px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [variant]);
+
+  useLayoutEffect(() => {
+    if (!host.current || !shouldMountEditor) return;
     const state = EditorState.create({
       doc: value,
       extensions: [
@@ -121,9 +136,9 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     });
     view.current = new EditorView({ state, parent: host.current });
     return () => { view.current?.destroy(); view.current = undefined; };
-  }, [nodeId, variant]);
+  }, [nodeId, shouldMountEditor, variant]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const editor = view.current;
     if (!editor || editor.state.doc.toString() === value) return;
     syncingValue.current = true;
@@ -140,7 +155,7 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     syncingValue.current = false;
   }, [value, isActiveNode, activeNodeCursor]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const editor = view.current;
     if (!isActiveNode || !editor) return;
     if (!editor.hasFocus) editor.focus();
@@ -156,6 +171,9 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
       className={`inline-editor ${variant === "root" ? "root-inline-editor" : ""}`}
       ref={host}
       aria-label={variant === "root" ? "根节点内容" : "节点内容"}
-    />
+      data-editor-mounted={shouldMountEditor || undefined}
+    >
+      {!shouldMountEditor && <div className="inline-editor-placeholder">{value || " "}</div>}
+    </div>
   );
 }

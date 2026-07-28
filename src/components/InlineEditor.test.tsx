@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { InlineEditor } from "./InlineEditor";
@@ -21,9 +21,54 @@ beforeEach(() => {
   useNotebookStore.setState(useNotebookStore.getInitialState(), true);
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("InlineEditor", () => {
+  it("commits root editor content immediately when switching nodes", () => {
+    const first = firstContentNode();
+    useNotebookStore.getState().editMarkdown(first.id, "first root");
+    const secondId = useNotebookStore.getState().createSibling(first.id, "second root")!;
+    const { getByLabelText, rerender } = render(
+      <InlineEditor nodeId={first.id} value="first root" variant="root" />,
+    );
+
+    rerender(<InlineEditor nodeId={secondId} value="second root" variant="root" />);
+
+    const host = getByLabelText("根节点内容");
+    const editor = EditorView.findFromDOM(host)!;
+    expect(host.querySelector(".inline-editor-placeholder")).toBeNull();
+    expect(editor.state.doc.toString()).toBe("second root");
+  });
+
+  it("keeps an offscreen node lightweight until it approaches the viewport", async () => {
+    let callback: IntersectionObserverCallback | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(next: IntersectionObserverCallback) { callback = next; }
+      observe = observe;
+      disconnect = disconnect;
+      unobserve = vi.fn();
+      takeRecords = () => [];
+      root = null;
+      rootMargin = "";
+      thresholds = [];
+    });
+    const node = firstContentNode();
+    useNotebookStore.setState({ activeNodeId: null });
+    const { getByLabelText } = render(<StoreEditor nodeId={node.id} />);
+    const host = getByLabelText("节点内容");
+
+    expect(host.querySelector(".cm-editor")).toBeNull();
+    expect(host.querySelector(".inline-editor-placeholder")?.textContent).toBe(node.markdown || " ");
+    await act(async () => callback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(host.querySelector(".cm-editor")).not.toBeNull();
+    expect(observe).toHaveBeenCalledWith(host);
+  });
+
   it("removes the selected text when Enter splits a node", () => {
     const store = useNotebookStore.getState();
     const node = firstContentNode();
@@ -94,6 +139,28 @@ describe("InlineEditor", () => {
 
     await waitFor(() => expect(useNotebookStore.getState().activeNodeId).toBe(first.id));
     expect(editors[0].state.selection.main.head).toBe(editors[0].state.doc.length);
+  });
+
+  it("moves focus to an adjacent virtualized node that is not mounted", async () => {
+    const first = firstContentNode();
+    useNotebookStore.getState().editMarkdown(first.id, "first");
+    const secondId = useNotebookStore.getState().createSibling(first.id, "second")!;
+    const { getByLabelText } = render(
+      <div data-tree-row="true" data-navigation-next-key={secondId}>
+        <StoreEditor nodeId={first.id} />
+      </div>,
+    );
+    const host = getByLabelText("节点内容");
+    const editor = EditorView.findFromDOM(host)!;
+
+    act(() => {
+      editor.dispatch({ selection: { anchor: editor.state.doc.length } });
+      editor.focus();
+    });
+    fireEvent.keyDown(host.querySelector<HTMLElement>(".cm-content")!, { key: "ArrowRight", code: "ArrowRight" });
+
+    await waitFor(() => expect(useNotebookStore.getState().activeNodeId).toBe(secondId));
+    expect(useNotebookStore.getState().activeNodeCursor).toBe(0);
   });
 
   it("moves vertically across adjacent nodes while preserving the text column", async () => {

@@ -39,6 +39,8 @@ export interface NotebookStore extends NotebookState {
   remove: (nodeId: string) => void;
   removeNodes: (nodeIds: string[], focusKey?: string | null) => void;
   restore: (nodeId: string) => void;
+  emptyTrash: () => Promise<{ purgedNodes: number; purgedAttachments: number }>;
+  maintainStorage: () => Promise<number>;
   addField: (nodeId: string, key: string, type: FieldType, value: string) => void;
   updateField: (fieldId: string, value: string) => void;
   addAttachment: (nodeId: string, file: File) => Promise<void>;

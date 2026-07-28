@@ -26,3 +26,11 @@ export async function storeAttachment(file: File, attachmentId: string): Promise
   }
   return { sha256: "local", localPath: URL.createObjectURL(file) };
 }
+
+export async function deleteStoredAttachments(attachmentIds: readonly string[]): Promise<number> {
+  if (!attachmentIds.length) return 0;
+  if (hasTauriRuntime()) {
+    return invoke<number>("delete_attachments", { attachmentIds });
+  }
+  return 0;
+}

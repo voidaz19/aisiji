@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
@@ -38,4 +41,25 @@ pub(crate) fn save_attachment(
 #[tauri::command]
 pub(crate) fn read_attachment(app: AppHandle, attachment_id: String) -> Result<Vec<u8>, String> {
     fs::read(attachment_dir(&app)?.join(attachment_id)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn delete_attachments(
+    app: AppHandle,
+    attachment_ids: Vec<String>,
+) -> Result<usize, String> {
+    let dir = attachment_dir(&app)?;
+    let mut deleted = 0;
+    for attachment_id in attachment_ids {
+        let mut components = Path::new(&attachment_id).components();
+        if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+            return Err("无效的附件 ID".to_string());
+        }
+        let path = dir.join(attachment_id);
+        if path.exists() {
+            fs::remove_file(path).map_err(|error| error.to_string())?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }

@@ -1,4 +1,5 @@
 import { EditorView, type KeyBinding } from "@codemirror/view";
+import { useNotebookStore } from "../store/useNotebookStore";
 
 type NavigationDirection = "left" | "right" | "up" | "down";
 
@@ -24,7 +25,7 @@ function moveAcrossNodeBoundary(view: EditorView, direction: NavigationDirection
   }
 
   const adjacent = adjacentEditor(view, forward);
-  if (!adjacent) return false;
+  if (!adjacent) return focusVirtualAdjacent(view, direction, forward);
 
   const anchor = direction === "left"
     ? adjacent.state.doc.length
@@ -33,6 +34,28 @@ function moveAcrossNodeBoundary(view: EditorView, direction: NavigationDirection
       : verticalAnchor(view, adjacent, forward);
   adjacent.dispatch({ selection: { anchor }, scrollIntoView: true });
   adjacent.focus();
+  return true;
+}
+
+function focusVirtualAdjacent(view: EditorView, direction: NavigationDirection, forward: boolean): boolean {
+  const row = view.dom.closest<HTMLElement>("[data-tree-row='true']");
+  const key = forward ? row?.dataset.navigationNextKey : row?.dataset.navigationPreviousKey;
+  if (!key) return false;
+  const store = useNotebookStore.getState();
+  if (key.startsWith("ghost:")) {
+    store.focusGhost(key.slice(6));
+    return true;
+  }
+  const target = store.nodes[key];
+  if (!target || target.deletedAt || target.kind !== "content") return false;
+  const sourceHead = view.state.selection.main.head;
+  const sourceLine = view.state.doc.lineAt(sourceHead);
+  const cursor = direction === "left"
+    ? "end"
+    : direction === "right"
+      ? 0
+      : Math.min(sourceHead - sourceLine.from, target.markdown.length);
+  store.focusNode(key, cursor);
   return true;
 }
 

@@ -2,7 +2,7 @@ import { ROOT_ID, type NodeRecord, type NotebookState } from "../../../domain/mo
 import { visibleNodes } from "../../../domain/tree";
 import type { WorkspaceView } from "../../../shared/workspaceView";
 
-export function findDateNode(state: NotebookState, dateKey: string): NodeRecord | undefined {
+export function findDateNode(state: Pick<NotebookState, "nodes">, dateKey: string): NodeRecord | undefined {
   return Object.values(state.nodes).find(
     (node) => node.kind === "date" && node.dateKey === dateKey && !node.deletedAt,
   );
@@ -30,7 +30,7 @@ export function breadcrumbPath(
 }
 
 export function visibleNodesForView(
-  state: NotebookState,
+  state: Pick<NotebookState, "nodes" | "collapsed">,
   view: WorkspaceView,
   rootId: string,
   query: string,

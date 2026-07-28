@@ -1,65 +1,78 @@
 import { cloneState, createEmptyState, newId, ROOT_ID, type NodeRecord, type NotebookState } from "./model";
 
-export function childrenOf(state: NotebookState, parentId: string): NodeRecord[] {
-  if (parentId === ROOT_ID) {
-    // Root node's children are nodes whose parentId is ROOT_ID
-    return Object.values(state.nodes)
-      .filter((node) => node.id !== ROOT_ID && node.parentId === ROOT_ID && !node.deletedAt)
-      .sort((a, b) => {
-        if (a.kind === "date" && b.kind === "date") {
-          return (b.dateKey ?? "").localeCompare(a.dateKey ?? "");
-        }
-        return a.sortKey - b.sortKey || a.createdAt - b.createdAt;
-      });
+export type ChildIndex = ReadonlyMap<string, readonly NodeRecord[]>;
+
+function compareSiblings(a: NodeRecord, b: NodeRecord): number {
+  if (a.kind === "date" && b.kind === "date") {
+    return (b.dateKey ?? "").localeCompare(a.dateKey ?? "");
   }
-  return Object.values(state.nodes)
-    .filter((node) => node.parentId === parentId && !node.deletedAt)
-    .sort((a, b) => {
-      // Date nodes sort among themselves by dateKey descending (newest first).
-      // Date nodes and content nodes use sortKey for their relative ordering;
-      // no kind-based override is needed because date nodes only ever appear
-      // at the global root and their sortKeys are assigned in creation order
-      // (which matches newest-first since today is always created first).
-      if (a.kind === "date" && b.kind === "date") {
-        return (b.dateKey ?? "").localeCompare(a.dateKey ?? "");
-      }
-      return a.sortKey - b.sortKey || a.createdAt - b.createdAt;
-    });
+  return a.sortKey - b.sortKey || a.createdAt - b.createdAt;
+}
+
+/** Builds a sorted active-child lookup for reuse within one immutable state calculation. */
+export function buildChildIndex(state: Pick<NotebookState, "nodes">): ChildIndex {
+  const index = new Map<string, NodeRecord[]>();
+  for (const node of Object.values(state.nodes)) {
+    if (node.id === ROOT_ID || node.deletedAt || !node.parentId) continue;
+    const children = index.get(node.parentId);
+    if (children) children.push(node);
+    else index.set(node.parentId, [node]);
+  }
+  for (const children of index.values()) children.sort(compareSiblings);
+  return index;
+}
+
+export function childrenOf(
+  state: Pick<NotebookState, "nodes">,
+  parentId: string,
+  childIndex?: ChildIndex,
+): NodeRecord[] {
+  return [...(childIndex?.get(parentId) ?? buildChildIndex(state).get(parentId) ?? [])];
 }
 
 export function visibleNodes(
-  state: NotebookState,
+  state: Pick<NotebookState, "nodes" | "collapsed">,
   rootId: string,
   _collapsed: Record<string, boolean> = state.collapsed,
 ): NodeRecord[] {
+  const childIndex = buildChildIndex(state);
   const result: NodeRecord[] = [];
   const visit = (parentId: string, depth: number) => {
-    for (const node of childrenOf(state, parentId)) {
+    for (const node of childIndex.get(parentId) ?? []) {
       result.push({ ...node, depth } as NodeRecord & { depth: number });
-      if (isNodeExpanded(state, node.id)) visit(node.id, depth + 1);
+      if (isNodeExpanded(state, node.id, childIndex)) visit(node.id, depth + 1);
     }
   };
   visit(rootId, 0);
   return result;
 }
 
-export function isNodeExpanded(state: NotebookState, nodeId: string): boolean {
+export function isNodeExpanded(
+  state: Pick<NotebookState, "nodes" | "collapsed">,
+  nodeId: string,
+  childIndex?: ChildIndex,
+): boolean {
   const node = state.nodes[nodeId];
   if (!node) return false;
-  const hasChildren = childrenOf(state, nodeId).length > 0;
+  const hasChildren = childIndex
+    ? (childIndex.get(nodeId)?.length ?? 0) > 0
+    : childrenOf(state, nodeId).length > 0;
   if (state.collapsed[nodeId] !== undefined) return !state.collapsed[nodeId];
   return hasChildren;
 }
 
-export function hasChildren(state: NotebookState, nodeId: string): boolean {
-  return childrenOf(state, nodeId).length > 0;
+export function hasChildren(state: Pick<NotebookState, "nodes">, nodeId: string, childIndex?: ChildIndex): boolean {
+  return childIndex
+    ? (childIndex.get(nodeId)?.length ?? 0) > 0
+    : childrenOf(state, nodeId).length > 0;
 }
 
 /** Returns the final node currently visible inside a node's expanded subtree. */
-export function lastVisibleNodeInSubtree(state: NotebookState, nodeId: string): NodeRecord | undefined {
+export function lastVisibleNodeInSubtree(state: Pick<NotebookState, "nodes" | "collapsed">, nodeId: string): NodeRecord | undefined {
+  const childIndex = buildChildIndex(state);
   let current = state.nodes[nodeId];
-  while (current && isNodeExpanded(state, current.id)) {
-    const children = childrenOf(state, current.id);
+  while (current && isNodeExpanded(state, current.id, childIndex)) {
+    const children = childIndex.get(current.id) ?? [];
     if (!children.length) break;
     current = children[children.length - 1];
   }
