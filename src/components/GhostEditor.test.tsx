@@ -33,6 +33,43 @@ describe("GhostEditor", () => {
     expect(created).toBeDefined();
   });
 
+  it("materializes before applying Tab indentation", async () => {
+    const store = useNotebookStore.getState();
+    const parent = activeContentNodes()[0];
+    const previous = store.createChild(parent.id, "previous");
+    const { getByLabelText } = render(<GhostEditor parentId={parent.id} />);
+    const content = getByLabelText("新建节点").querySelector<HTMLElement>(".cm-content")!;
+    content.focus();
+
+    fireEvent.keyDown(content, { key: "Tab", code: "Tab", keyCode: 9, which: 9 });
+
+    await waitFor(() => {
+      const created = Object.values(useNotebookStore.getState().nodes)
+        .find((node) => node.kind === "content" && node.markdown === "" && node.id !== parent.id && node.id !== previous);
+      expect(created).toBeDefined();
+      expect(useNotebookStore.getState().nodes[created!.id].parentId).toBe(previous);
+    });
+  });
+
+  it("opens the shared command menu when Control is released alone", async () => {
+    const parent = activeContentNodes()[0];
+    const { getByLabelText, getByRole } = render(<GhostEditor parentId={parent.id} />);
+    const content = getByLabelText("新建节点").querySelector<HTMLElement>(".cm-content")!;
+    content.focus();
+
+    fireEvent.keyDown(document, { key: "Control", code: "ControlLeft", ctrlKey: true });
+    fireEvent.keyUp(document, { key: "Control", code: "ControlLeft" });
+
+    await waitFor(() => getByRole("dialog", { name: "插入与格式菜单" }));
+    fireEvent.click(getByRole("button", { name: "粗体" }));
+
+    await waitFor(() => {
+      expect(Object.values(useNotebookStore.getState().nodes).some(
+        (node) => node.kind === "content" && node.markdown === "****",
+      )).toBe(true);
+    });
+  });
+
   it("splits multiline paste into ordered child nodes", async () => {
     const parent = activeContentNodes()[0];
     const { getByLabelText } = render(<GhostEditor parentId={parent.id} />);

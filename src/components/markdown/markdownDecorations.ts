@@ -9,9 +9,11 @@ import {
   resolveNodeLink,
 } from "./markdownInteractions";
 import { markdownSourceMode, setMarkdownSourceMode } from "./markdownPreviewState";
+import { markdownEditorNodeId } from "./markdownEditorContext";
 import {
   attachmentWidget,
   ExternalLinkWidget,
+  imageAttachmentWidget,
   ImageWidget,
   NodeLinkWidget,
 } from "./markdownWidgets";
@@ -93,13 +95,12 @@ function markerEndWithSpacing(state: EditorState, name: string, to: number) {
 
 function revealedBoundary(state: EditorState, hasFocus: boolean): RevealedBoundary | null {
   const selection = state.selection.main;
-  if (!hasFocus || !selection.empty) return null;
-  const caret = selection.head;
+  if (!hasFocus) return null;
   const candidates: RevealedBoundary[] = [];
   syntaxTree(state).iterate({
     enter(node) {
       if (!boundaryParentTypes.has(node.type.name)) return;
-      if (caret >= node.from && caret <= node.to) {
+      if (selection.from >= node.from && selection.to <= node.to) {
         candidates.push({ from: node.from, to: node.to });
       }
     },
@@ -150,10 +151,11 @@ interface MarkdownDecorationSets {
 export type MarkdownAtomKind = "hidden" | "component";
 export interface MarkdownAtomicRange { from: number; to: number; kind: MarkdownAtomKind }
 
-function buildMarkdownDecorationSets(state: EditorState, hasFocus = false): MarkdownDecorationSets {
+function buildMarkdownDecorationSets(state: EditorState, hasFocus = false, composing = false): MarkdownDecorationSets {
   const ranges: Range<Decoration>[] = [];
   const atomicRanges: Range<Decoration>[] = [];
-  const sourceMode = state.field(markdownSourceMode, false);
+  const sourceMode = state.field(markdownSourceMode, false) || composing;
+  const editorNodeId = state.facet(markdownEditorNodeId);
   const boundary = sourceMode ? null : revealedBoundary(state, hasFocus);
   const replace = (from: number, to: number, decoration: Decoration, kind: MarkdownAtomKind = "component") => {
     ranges.push(decoration.range(from, to));
@@ -189,8 +191,15 @@ function buildMarkdownDecorationSets(state: EditorState, hasFocus = false): Mark
       if (name === "Image") {
         const parts = linkParts(state, node);
         if (parts && !sourceMode && !revealThisNode) {
+          if (attachmentIdFromTarget(parts.target)) {
+            const widget = imageAttachmentWidget(parts.target, parts.label, editorNodeId);
+            if (widget) {
+              replace(node.from, node.to, Decoration.replace({ widget }));
+              return false;
+            }
+          }
           const source = imagePreviewTarget(parts.target);
-          if (source || attachmentIdFromTarget(parts.target)) {
+          if (source) {
             replace(node.from, node.to, Decoration.replace({
               widget: new ImageWidget(parts.target, parts.label, source),
             }));
@@ -203,7 +212,7 @@ function buildMarkdownDecorationSets(state: EditorState, hasFocus = false): Mark
         const editingSource = caretInsideSource(state, hasFocus, node.from, node.to);
         if (parts && !sourceMode && !revealThisNode && !editingSource) {
           if (attachmentIdFromTarget(parts.target)) {
-            const widget = attachmentWidget(parts.target, parts.label);
+            const widget = attachmentWidget(parts.target, parts.label, editorNodeId);
             if (widget) replace(node.from, node.to, Decoration.replace({ widget }));
             return false;
           }
@@ -224,7 +233,12 @@ function buildMarkdownDecorationSets(state: EditorState, hasFocus = false): Mark
       if (name === "NodeTaskMark") {
         if (sourceMode) return;
         const checked = /^\[[xX]\]/.test(state.sliceDoc(node.from, node.to));
-        replace(node.from, node.to, Decoration.replace({ widget: new TaskCheckboxWidget(node.from, checked) }));
+        // The task grammar requires a separator after `[ ]`/`[x]`. Keep that
+        // separator inside the checkbox component so the caret cannot land
+        // between the visual checkbox and its task text.
+        const separator = state.sliceDoc(node.to, node.to + 1);
+        const componentTo = /^[ \t]$/.test(separator) ? node.to + 1 : node.to;
+        replace(node.from, componentTo, Decoration.replace({ widget: new TaskCheckboxWidget(node.from, checked) }));
         return;
       }
 
@@ -233,9 +247,9 @@ function buildMarkdownDecorationSets(state: EditorState, hasFocus = false): Mark
         const revealThisParent = parent && revealsNode(boundary, parent.from, parent.to);
         if (!sourceMode && !revealThisParent) {
           const to = markerEndWithSpacing(state, name, node.to);
-          // Formatting markers keep the existing boundary-reveal behavior and
-          // therefore must remain cursor-addressable when they are shown.
-          ranges.push(Decoration.replace({}).range(node.from, to));
+          // Formatting markers stay ordinary editable text. Hide them with a
+          // regular mark so they never become replacement or atomic ranges.
+          ranges.push(Decoration.mark({ class: "cm-live-hidden-mark" }).range(node.from, to));
         }
       }
     },
@@ -255,7 +269,7 @@ export const markdownLivePreview = ViewPlugin.fromClass(class {
   atomicRanges: DecorationSet;
 
   constructor(view: EditorView) {
-    const sets = buildMarkdownDecorationSets(view.state, view.hasFocus);
+    const sets = buildMarkdownDecorationSets(view.state, view.hasFocus, view.composing);
     this.decorations = sets.decorations;
     this.atomicRanges = sets.atomicRanges;
   }
@@ -264,7 +278,7 @@ export const markdownLivePreview = ViewPlugin.fromClass(class {
     const sourceModeChanged = update.transactions.some((transaction) =>
       transaction.effects.some((effect) => effect.is(setMarkdownSourceMode)));
     if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || sourceModeChanged) {
-      const sets = buildMarkdownDecorationSets(update.state, update.view.hasFocus);
+      const sets = buildMarkdownDecorationSets(update.state, update.view.hasFocus, update.view.composing);
       this.decorations = sets.decorations;
       this.atomicRanges = sets.atomicRanges;
     }

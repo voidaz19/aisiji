@@ -3,6 +3,7 @@ import { TREE_LAYOUT_ANIMATION_DURATION, TREE_LAYOUT_ANIMATION_EASING } from "..
 
 interface RowSnapshot {
   id: string;
+  kind: "node" | "placeholder";
   depth: number;
   top: number;
   left: number;
@@ -48,8 +49,15 @@ export function useTreeLayoutAnimation(
 
     const { rows, currentRows } = measureRows(container);
 
-    const currentIds = rows.map((row) => row.dataset.treeBlockKey).filter((id): id is string => Boolean(id));
-    const sameNodeSet = previous.size === currentRows.size && currentIds.every((id) => previous.has(id));
+    const previousNodeIds = Array.from(previous.values())
+      .filter((row) => row.kind === "node")
+      .map((row) => row.id);
+    const currentNodeRows = rows.filter((row) => row.dataset.treeBlockKind === "node");
+    const currentNodeIds = currentNodeRows
+      .map((row) => row.dataset.treeBlockKey)
+      .filter((id): id is string => Boolean(id));
+    const sameNodeSet = previousNodeIds.length === currentNodeIds.length
+      && currentNodeIds.every((id) => previous.has(id));
     animations.current.forEach((animation) => animation.cancel());
     animations.current.clear();
 
@@ -57,12 +65,12 @@ export function useTreeLayoutAnimation(
       return captureStableBaseline();
     }
 
-    const structureChanged = rows.some((row, index) => {
+    const structureChanged = currentNodeRows.some((row, index) => {
       const id = row.dataset.treeBlockKey;
       if (!id) return false;
       const snapshot = previous.get(id);
       const current = currentRows.get(id);
-      const previousId = Array.from(previous.values())[index]?.id;
+      const previousId = previousNodeIds[index];
       return !snapshot || !current || snapshot.depth !== current.depth || previousId !== id;
     });
 
@@ -118,6 +126,7 @@ function measureRows(container: HTMLDivElement): { rows: HTMLElement[]; currentR
     const bullet = row.querySelector<HTMLElement>(".node-bullet")?.getBoundingClientRect();
     currentRows.set(id, {
       id,
+      kind: row.dataset.treeBlockKind === "placeholder" ? "placeholder" : "node",
       depth: Number(row.dataset.depth ?? 0),
       top: rect.top,
       // The row spans the whole list, so its left edge never changes when

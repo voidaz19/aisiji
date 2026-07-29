@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
@@ -15,6 +15,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(HTMLElement.prototype, "animate");
 });
 
 function renderOutline(layoutDebug = false) {
@@ -53,6 +54,170 @@ function dragTo(target: Element): void {
 function box(left: number, top: number, right: number, bottom: number): DOMRect {
   return { left, top, right, bottom, x: left, y: top, width: right - left, height: bottom - top, toJSON: () => ({}) } as DOMRect;
 }
+
+function installTreeMotionMocks() {
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const row = this.matches("[data-tree-block-key]")
+      ? this
+      : this.closest<HTMLElement>("[data-tree-block-key]");
+    if (!row) return box(0, 0, 0, 0);
+    const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-tree-block-key]"));
+    const top = Math.max(0, rows.indexOf(row)) * 40;
+    const left = this.classList.contains("node-bullet")
+      ? 40 + Number(row.dataset.depth ?? 0) * 24
+      : 0;
+    return box(left, top, left + 800, top + 32);
+  });
+  const animate = vi.fn(() => ({
+    cancel: vi.fn(),
+    finished: new Promise<void>(() => undefined),
+  }) as unknown as Animation);
+  Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+
+  const flushFrame = () => {
+    const callbacks = frames.splice(0);
+    act(() => callbacks.forEach((callback) => callback(performance.now())));
+  };
+  return { animate, flushFrame };
+}
+
+describe("NotebookPanel draft structure commands", () => {
+  it("does not materialize the page ghost when Tab cannot indent it", () => {
+    const beforeIds = Object.keys(useNotebookStore.getState().nodes);
+    const { container } = render(<ReactiveOutline />);
+    const content = container.querySelector<HTMLElement>(
+      `[data-selection-key="ghost:${ROOT_ID}"] .cm-content`,
+    )!;
+
+    fireEvent.keyDown(content, { key: "Tab", code: "Tab", keyCode: 9, which: 9 });
+
+    expect(Object.keys(useNotebookStore.getState().nodes)).toEqual(beforeIds);
+    expect(container.querySelector(`[data-selection-key="ghost:${ROOT_ID}"]`)).not.toBeNull();
+  });
+
+  it("does not materialize a direct child ghost when Shift+Tab hits the page boundary", () => {
+    const pageId = useNotebookStore.getState().createChild(ROOT_ID, "page")!;
+    useNotebookStore.setState((state) => ({
+      activeRootId: pageId,
+      collapsed: { ...state.collapsed, [pageId]: false },
+    }));
+    const beforeIds = Object.keys(useNotebookStore.getState().nodes);
+    const { container } = render(<ReactiveOutline />);
+    const content = container.querySelector<HTMLElement>(
+      `[data-selection-key="ghost:${pageId}"] .cm-content`,
+    )!;
+
+    fireEvent.keyDown(content, { key: "Tab", code: "Tab", shiftKey: true, keyCode: 9, which: 9 });
+
+    expect(Object.keys(useNotebookStore.getState().nodes)).toEqual(beforeIds);
+    expect(container.querySelector(`[data-selection-key="ghost:${pageId}"]`)).not.toBeNull();
+  });
+
+  it("materializes and indents the page ghost after its persisted row mounts", async () => {
+    const previousId = useNotebookStore.getState().createChild(ROOT_ID, "previous sibling")!;
+    const beforeIds = new Set(Object.keys(useNotebookStore.getState().nodes));
+    const motion = installTreeMotionMocks();
+    const { container } = render(<ReactiveOutline />);
+    motion.flushFrame();
+    const content = container.querySelector<HTMLElement>(
+      `[data-selection-key="ghost:${ROOT_ID}"] .cm-content`,
+    )!;
+
+    fireEvent.keyDown(content, { key: "Tab", code: "Tab", keyCode: 9, which: 9 });
+    motion.flushFrame();
+    motion.flushFrame();
+
+    await waitFor(() => {
+      const created = Object.values(useNotebookStore.getState().nodes)
+        .filter((node) => !beforeIds.has(node.id));
+      expect(created).toHaveLength(1);
+      expect(created[0]?.parentId).toBe(previousId);
+    });
+    expect(motion.animate).toHaveBeenCalled();
+  });
+
+  it("reuses the page ghost for consecutive Tab submissions", async () => {
+    const previousId = useNotebookStore.getState().createChild(ROOT_ID, "previous sibling")!;
+    const beforeIds = new Set(Object.keys(useNotebookStore.getState().nodes));
+    const motion = installTreeMotionMocks();
+    const { container } = render(<ReactiveOutline />);
+    motion.flushFrame();
+
+    const pressPageGhostTab = () => {
+      const content = container.querySelector<HTMLElement>(
+        `[data-selection-key="ghost:${ROOT_ID}"] .cm-content`,
+      )!;
+      fireEvent.keyDown(content, { key: "Tab", code: "Tab", keyCode: 9, which: 9 });
+      motion.flushFrame();
+      motion.flushFrame();
+    };
+
+    pressPageGhostTab();
+    await waitFor(() => expect(
+      Object.values(useNotebookStore.getState().nodes).filter((node) => !beforeIds.has(node.id)),
+    ).toHaveLength(1));
+
+    pressPageGhostTab();
+    await waitFor(() => {
+      const created = Object.values(useNotebookStore.getState().nodes)
+        .filter((node) => !beforeIds.has(node.id));
+      expect(created).toHaveLength(2);
+      expect(created.every((node) => node.parentId === previousId)).toBe(true);
+    });
+  });
+
+  it("materializes and outdents a child ghost with a layout animation", async () => {
+    const parentId = useNotebookStore.getState().createChild(ROOT_ID, "parent")!;
+    useNotebookStore.setState((state) => ({
+      collapsed: { ...state.collapsed, [parentId]: false },
+    }));
+    const beforeIds = new Set(Object.keys(useNotebookStore.getState().nodes));
+    const motion = installTreeMotionMocks();
+    const { container } = render(<ReactiveOutline />);
+    motion.flushFrame();
+    const content = container.querySelector<HTMLElement>(
+      `[data-selection-key="ghost:${parentId}"] .cm-content`,
+    )!;
+
+    fireEvent.keyDown(content, { key: "Tab", code: "Tab", shiftKey: true, keyCode: 9, which: 9 });
+    motion.flushFrame();
+    motion.flushFrame();
+
+    await waitFor(() => {
+      const created = Object.values(useNotebookStore.getState().nodes)
+        .filter((node) => !beforeIds.has(node.id));
+      expect(created).toHaveLength(1);
+      expect(created[0]?.parentId).toBe(ROOT_ID);
+    });
+    expect(motion.animate).toHaveBeenCalled();
+  });
+
+  it("animates a real node indent when it replaces an empty parent's ghost", async () => {
+    const parentId = useNotebookStore.getState().createChild(ROOT_ID, "empty parent")!;
+    const movingId = useNotebookStore.getState().createChild(ROOT_ID, "moving node")!;
+    useNotebookStore.setState((state) => ({
+      collapsed: { ...state.collapsed, [parentId]: false },
+    }));
+    const motion = installTreeMotionMocks();
+    const { container } = render(<ReactiveOutline />);
+    motion.flushFrame();
+    expect(container.querySelector(`[data-selection-key="ghost:${parentId}"]`)).not.toBeNull();
+
+    act(() => useNotebookStore.getState().indent(movingId));
+
+    await waitFor(() => {
+      expect(useNotebookStore.getState().nodes[movingId].parentId).toBe(parentId);
+      expect(container.querySelector(`[data-selection-key="ghost:${parentId}"]`)).toBeNull();
+      expect(motion.animate).toHaveBeenCalled();
+    });
+  });
+});
 
 describe("NotebookPanel root heading", () => {
   it("uses the same full-width heading contract for date and content roots", () => {

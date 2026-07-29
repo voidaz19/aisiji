@@ -361,7 +361,9 @@ function pointInsideNodeLayout(
 }
 
 function isInteractiveControl(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest("button, input, label, a, .hierarchy-line-hit"));
+  return target instanceof Element && Boolean(target.closest(
+    "button, input, label, a, audio, video, iframe, [data-attachment-control], .hierarchy-line-hit",
+  ));
 }
 
 function editorFromTarget(target: EventTarget | null): EditorView | null {

@@ -38,7 +38,11 @@ describe("TopBar breadcrumbs", () => {
         activeRoot={contentNode("current", "当前节点")}
         parentBreadcrumbs={parents}
         atViewRoot={false}
+        canGoBack={false}
+        canGoForward={false}
         onToggleSidebar={vi.fn()}
+        onGoBack={vi.fn()}
+        onGoForward={vi.fn()}
         onNavigate={vi.fn()}
         onOpenRoot={onOpenRoot}
         onOpenViewRoot={vi.fn()}
@@ -55,5 +59,29 @@ describe("TopBar breadcrumbs", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "打开上级节点：第二个很长的层级" }));
     expect(onOpenRoot).toHaveBeenCalledWith("second");
+  });
+
+  it("exposes backward and forward navigation with disabled states", () => {
+    const onGoBack = vi.fn();
+    render(
+      <TopBar
+        view="settings"
+        activeRoot={null}
+        parentBreadcrumbs={[]}
+        atViewRoot
+        canGoBack
+        canGoForward={false}
+        onToggleSidebar={vi.fn()}
+        onGoBack={onGoBack}
+        onGoForward={vi.fn()}
+        onNavigate={vi.fn()}
+        onOpenRoot={vi.fn()}
+        onOpenViewRoot={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "后退" }));
+    expect(onGoBack).toHaveBeenCalledOnce();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "前进" }).disabled).toBe(true);
   });
 });

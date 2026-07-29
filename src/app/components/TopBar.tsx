@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Cloud, PanelLeft, Settings } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, PanelLeft, Settings } from "lucide-react";
 import type { NodeRecord } from "../../domain/model";
 import { dateLabel } from "../../shared/date";
 import { VIEW_LABELS, type WorkspaceView } from "../../shared/workspaceView";
@@ -10,7 +10,11 @@ interface Props {
   activeRoot: NodeRecord | null;
   parentBreadcrumbs: NodeRecord[];
   atViewRoot: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
   onToggleSidebar: () => void;
+  onGoBack: () => void;
+  onGoForward: () => void;
   onNavigate: (view: WorkspaceView) => void;
   onOpenRoot: (nodeId: string) => void;
   onOpenViewRoot: () => void;
@@ -25,7 +29,11 @@ export function TopBar({
   activeRoot,
   parentBreadcrumbs,
   atViewRoot,
+  canGoBack,
+  canGoForward,
   onToggleSidebar,
+  onGoBack,
+  onGoForward,
   onNavigate,
   onOpenRoot,
   onOpenViewRoot,
@@ -39,6 +47,14 @@ export function TopBar({
       <button className="icon-button" type="button" onClick={onToggleSidebar} aria-label="切换侧栏">
         <PanelLeft size={18} />
       </button>
+      <div className="navigation-controls" aria-label="页面导航">
+        <button className="icon-button" type="button" onClick={onGoBack} disabled={!canGoBack} aria-label="后退" title="后退 (Alt+左方向键)">
+          <ArrowLeft size={17} />
+        </button>
+        <button className="icon-button" type="button" onClick={onGoForward} disabled={!canGoForward} aria-label="前进" title="前进 (Alt+右方向键)">
+          <ArrowRight size={17} />
+        </button>
+      </div>
       <div className="breadcrumbs">
         {view === "home" ? <span className="breadcrumb-current">主页</span> : (
           <>

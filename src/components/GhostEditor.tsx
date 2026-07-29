@@ -1,14 +1,17 @@
 import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { canExecuteDraftMove } from "../domain/commands/moveNode";
 import { childrenOf, lastVisibleNodeInSubtree } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { planMultilinePaste } from "./editorClipboard";
 import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme } from "./editorTheme";
+import { EditorCommandMenu } from "./EditorCommandMenu";
 import { createMarkdownEditorExtensions } from "./markdown/markdownEditor";
+import { runWithEditorNode, type EditorTarget } from "./editorTarget";
 
 interface Props {
   /** Parent the eventual real node should be created under. */
@@ -39,17 +42,25 @@ export function GhostEditor({ parentId }: Props) {
     handedOff.current = false;
     composing.current = false;
 
-    const materialize = () => {
+    const materialize = (requestedMarkdown?: string): string | null => {
       const current = view.current;
-      if (!current || handedOff.current || composing.current || current.composing) return;
-      const text = current.state.doc.toString();
-      if (!text) return;
+      if (!current || handedOff.current || composing.current || current.composing) return null;
+      const text = requestedMarkdown ?? current.state.doc.toString();
+      if (!text && requestedMarkdown === undefined) return null;
       handedOff.current = true;
       const caret = current.state.selection.main.head;
       const newNodeId = createChild(parentId, text);
       current.dispatch({ changes: { from: 0, to: current.state.doc.length, insert: "" } });
       handedOff.current = false;
       if (newNodeId) focusRealEditor(newNodeId, caret);
+      return newNodeId;
+    };
+
+    const target: EditorTarget = {
+      kind: "draft",
+      nodeId: null,
+      parentId,
+      materialize: (markdown) => materialize(markdown),
     };
 
     const createBlankChild = () => {
@@ -75,12 +86,25 @@ export function GhostEditor({ parentId }: Props) {
             },
             createChild: createBlankChild,
             indent: (editor) => {
-              if (editor.state.doc.length > 0) materialize();
-              return true;
+              if (!canExecuteDraftMove(useNotebookStore.getState(), { type: "indent", parentId })) return true;
+              // Draft commands are handed to the persisted row after its
+              // first stable layout has been captured.
+              return runWithEditorNode(target, editor, (nodeId) => {
+                useNotebookStore.getState().indent(nodeId);
+                return true;
+              });
             },
             outdent: (editor) => {
-              if (editor.state.doc.length > 0) materialize();
-              return true;
+              const notebook = useNotebookStore.getState();
+              if (!canExecuteDraftMove(notebook, {
+                type: "outdent",
+                parentId,
+                boundaryRootId: notebook.activeRootId,
+              })) return true;
+              return runWithEditorNode(target, editor, (nodeId) => {
+                useNotebookStore.getState().outdent(nodeId);
+                return true;
+              });
             },
             backspace: (editor) => {
               if (!editor.state.selection.main.empty || editor.state.selection.main.head !== 0) return false;
@@ -110,7 +134,6 @@ export function GhostEditor({ parentId }: Props) {
           ...crossNodeNavigationKeymap,
           ...historyKeymap,
           ...defaultKeymap,
-          indentWithTab,
         ]),
         EditorView.updateListener.of((update) => {
           if (handedOff.current || !update.docChanged) return;
@@ -166,7 +189,12 @@ export function GhostEditor({ parentId }: Props) {
     }
   }, [shouldFocus]);
 
-  return <div className="inline-editor ghost-editor" ref={host} aria-label="新建节点" />;
+  return (
+    <div className="inline-editor-shell">
+      <div className="inline-editor ghost-editor" ref={host} aria-label="新建节点" />
+      <EditorCommandMenu getEditor={() => view.current} />
+    </div>
+  );
 }
 
 function focusRealEditor(nodeId: string, caret: number, attempt = 0): void {

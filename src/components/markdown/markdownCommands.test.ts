@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   toggleBold,
   toggleHighlight,
+  toggleHeading,
   toggleInlineCode,
   toggleItalic,
+  toggleQuote,
   toggleStrikethrough,
+  toggleTask,
+  insertMarkdownText,
 } from "./markdownCommands";
 
 type MarkdownCommand = typeof toggleBold;
@@ -52,5 +56,35 @@ describe("Markdown formatting commands", () => {
     const state = runCommand("a====b", { anchor: 3 }, toggleHighlight);
     expect(state.doc.toString()).toBe("ab");
     expect(state.selection.main.head).toBe(1);
+  });
+
+  it.each([
+    [toggleHeading, "# text", "text"],
+    [toggleQuote, "> text", "text"],
+    [toggleTask, "[x] text", "text"],
+  ])("toggles a node-level Markdown prefix", (command, prefixed, plain) => {
+    const added = runCommand(plain, { anchor: plain.length }, command);
+    expect(added.doc.toString()).toBe(
+      command === toggleHeading ? "# text" : command === toggleQuote ? "> text" : "[ ] text",
+    );
+    expect(added.selection.main.head).toBe(added.doc.length);
+
+    const removed = runCommand(prefixed, { anchor: prefixed.length }, command);
+    expect(removed.doc.toString()).toBe(plain);
+    expect(removed.selection.main.head).toBe(plain.length);
+  });
+
+  it("preserves a text selection while mapping it across a block prefix", () => {
+    const added = runCommand("text", { anchor: 1, head: 3 }, toggleQuote);
+    expect(added.selection.main).toEqual(EditorSelection.range(3, 5));
+
+    const removed = runCommand("> text", { anchor: 3, head: 5 }, toggleQuote);
+    expect(removed.selection.main).toEqual(EditorSelection.range(1, 3));
+  });
+
+  it("replaces the current selection with inserted Markdown text", () => {
+    const state = runCommand("left old right", { anchor: 5, head: 8 }, insertMarkdownText("[["));
+    expect(state.doc.toString()).toBe("left [[ right");
+    expect(state.selection.main.head).toBe(7);
   });
 });

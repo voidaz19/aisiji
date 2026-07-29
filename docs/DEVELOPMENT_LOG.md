@@ -1,5 +1,230 @@
 # 开发施工日志
 
+## 2026-07-29：虚节点统一编辑目标适配
+
+### 用户确认
+
+- 用户确认采用“临时草稿 + 统一命令入口”方案：虚节点不持久化为空节点，但交互上应与真实节点保持一致，避免未来每增加一种节点功能就重复适配 `GhostEditor`。
+
+### 修改
+
+- 新增 `src/components/editorTarget.ts`：定义真实节点/临时草稿的统一 `EditorTarget`，并提供“需要 nodeId 时先实体化，再执行命令”的单一入口；实体化结果在当前编辑会话内缓存，避免同一草稿重复创建。
+- `src/components/GhostEditor.tsx`：`Tab`/`Shift+Tab` 改为通过统一入口先创建空节点，再执行缩进/提升；虚节点接入与真实节点共用的 `EditorCommandMenu`，单独按下并松开 `Ctrl` 时可以打开格式与插入菜单。
+- `src/components/InlineEditor.tsx`：缩进、提升、前后合并统一通过 `EditorTarget` 入口执行，真实节点继续直接复用已有 nodeId。
+- `src/components/EditorCommandMenu.tsx`：菜单文件入口改为可选能力，使草稿可先共享格式/结构/节点命令，不被迫伪造附件持久化身份。
+- `src/components/editorTarget.test.ts`、`src/components/GhostEditor.test.tsx`：覆盖草稿实体化缓存、真实节点直通、虚节点 Tab 缩进和 Ctrl 菜单入口。
+
+### 实测反馈与修复
+
+- 用户实测发现：页面末尾虚节点按 `Tab` 没有可见反应；可提升层级的虚节点按 `Shift+Tab` 会改变层级，但没有布局动画。
+- 根因是草稿实体化与缩进/提升在同一按键回调内连续执行。React 无法先提交“虚行替换为真实行”的中间布局；同时 FLIP 动画要求前后树行 key 集合一致，而虚行 key `ghost:<parentId>` 与新节点 ID 不同，因此首次布局变化只会重建动画基线。
+- `src/components/editorTarget.ts`：真实节点命令继续同步执行；草稿首次实体化后统一等待两次动画帧，先让真实节点行完成挂载并由布局 Hook 捕获稳定基线，再执行原节点命令。命令调度仍位于统一入口，不在 `GhostEditor` 维护单独的实体化规则。
+- `src/features/notebook/NotebookPanel.test.tsx`：新增真实页面渲染回归，从页面末尾虚节点触发 `Tab`、从子级虚节点触发 `Shift+Tab`，分别断言新节点最终父级、仅创建一次以及 FLIP 动画被调用。
+- `src/components/editorTarget.test.ts`：锁定草稿命令在实体化后的两帧交接和真实节点同步直通行为。
+- 用户继续实测发现：页面末尾虚节点首次 `Tab` 正常，之后再次按 `Tab` 不再创建或缩进新节点。根因是该插入位会长期复用，而统一目标把首次实体化得到的节点 ID 永久留在草稿对象中，后续命令因此误用旧节点身份。
+- `src/components/editorTarget.ts`：草稿节点 ID 改为仅在“实体化到延迟命令交接”期间有效；命令完成或抛错后统一释放，允许同一页面末尾插入位再次实体化。交接未完成时的快速重复按键会被消费但不会重复创建，也不会再次操作旧节点。
+- `src/components/editorTarget.test.ts`、`src/features/notebook/NotebookPanel.test.tsx`：覆盖交接期间防重复、交接后身份释放，以及同一页面末尾虚节点连续两次 `Tab` 均各自创建一个新节点并缩进到正确父级。
+- 用户继续实测提出两点：无效 `Tab` 仍会把虚节点实体化；真实节点缩进到空父节点、取代其虚占位行时没有动画。
+- `src/domain/commands/moveNode.ts`：新增纯逻辑草稿移动预检。它在内存状态中放入临时候选节点，再调用与真实节点完全相同的 `executeMoveNode` 判断是否会发生结构变化，不复制缩进、提升或页面边界规则，也不写入 Store、操作日志或持久化。
+- `src/components/GhostEditor.tsx`：`Tab`/`Shift+Tab` 先执行上述预检；无前置同级、已到页面根边界等无效操作只消费按键并保留虚节点，只有可执行操作才进入统一实体化与命令交接。
+- `src/features/notebook/hooks/useTreeLayoutAnimation.ts`：动画基线兼容性改为比较稳定真实节点集合。只有占位行出现或消失时，仍对前后都存在的真实节点执行 FLIP；真实节点集合本身增删时继续等待下一帧重建稳定基线。
+- `src/domain/commands/nodeCommands.test.ts`、`src/features/notebook/NotebookPanel.test.tsx`：覆盖预检复用领域规则且不污染状态、无效 `Tab`/`Shift+Tab` 不实体化，以及真实节点缩进并取代空父节点虚占位行时触发布局动画。
+
+### 验证
+
+- 定向测试通过：4 个文件/41 条测试。
+- 完整 `npm run check`：通过（模块边界、37 个测试文件/281 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- 实测修复定向测试通过：3 个文件/49 条测试。
+- 修复后完整 `npm run check` 通过（模块边界、37 个测试文件/283 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- 连续提交修复定向测试通过：3 个文件/50 条测试。
+- 连续提交修复后完整 `npm run check` 通过（模块边界、37 个测试文件/284 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- 交互可用性与占位行动画修复定向测试通过：3 个文件/64 条测试。
+- 修复后完整 `npm run check` 通过（模块边界、37 个测试文件/288 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- 用户实际验收通过：虚节点无效 `Tab` 不实体化、连续有效 `Tab` 可重复创建并缩进、真实节点缩进取代虚占位行时动画正常。
+- 按项目约定同步更新 `README.md` 当前能力，记录虚节点复用真实节点命令语义、仅可交互时实体化并沿用层级位移动画。
+
+## 2026-07-29：空节点回车错误向上创建
+
+### 根因
+
+- 用户发现普通空节点按 `Enter` 后，新节点错误出现在当前节点上方。
+- Store 使用 `before === "" && after === current.markdown` 判断“非空节点行首回车”，以便在原节点上方插入空节点；空节点的 `before`、`after` 和原文恰好全部为空字符串，因此误入同一分支。
+
+### 修复
+
+- `src/store/useNotebookStore.ts`：只有当前节点原文非空且光标确实位于行首时，才选择 `before` 放置；空节点回车改走常规拆分，在当前节点视觉下方创建新空节点并聚焦。
+- 保留展开父节点拆到首个子级、折叠父节点拆到下方同级，以及活动页面根拆到子级的既有规则。
+- `src/store/useNotebookStore.test.ts` 与 `src/components/InlineEditor.test.tsx`：分别覆盖 Store 顺序和真实编辑器 `Enter` 按键路径。
+- `docs/编辑规范.md`：补充空节点回车与非空节点行首回车的明确区别；项目结构与 SPEC 索引未变化。
+
+### 验证
+
+- 定向测试通过：3 个测试文件/64 条测试。
+- 完整 `npm run check` 通过：模块边界、36 个测试文件/277 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- `git diff --check` 通过。
+- 用户实际验收通过：普通空节点按 `Enter` 后，新空节点稳定出现在当前节点下方并获得焦点。
+- 按项目约定同步更新 `README.md`，在当前能力中记录空节点回车向下连续创建。
+
+## 2026-07-29：待办原子范围包含分隔空格
+
+### 用户反馈与判断
+
+- 用户指出待办原子范围目前只有 `[ ]`，按待办语义应包含后面的分隔空格。
+- `NodeTask` 解析规则本来就要求 `[ ]`/`[x]` 后存在空格或制表符；预览中的复选框组件代表整个待办前缀，分隔字符不应留下一个可单独落点的视觉空白位置。
+
+### 修改
+
+- `src/components/markdown/markdownDecorations.ts`：保持 `NodeTaskMark` 语法节点只描述三个状态字符，在生成预览替换装饰时将紧随其后的空格或制表符一并纳入组件原子范围。
+- 不修改 Markdown 持久化文本；复选框点击仍只把 `[ ]` 与 `[x]` 中间字符互换。
+- `src/components/markdown/markdownDecorations.test.ts` 与 `docs/MARKDOWN_SPEC.md`：锁定 `[ ] ` 范围为 `0..4`，并记录预览态组件边界。
+
+### 验证
+
+- 定向测试通过：2 个测试文件/55 条测试。
+- 完整 `npm run check` 通过：模块边界、36 个测试文件/275 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- `git diff --check` 通过。
+- README 暂不更新，待用户实际验收本轮待办光标行为后再按项目约定同步。
+
+## 2026-07-29：连续波浪号被误隐藏
+
+### 根因
+
+- 用户发现依次输入 `~`、`~~`、`~~~` 时，第三个字符会导致全部波浪号隐藏。
+- 删除线本身没有特殊处理。真正原因是 Lezer Markdown 会把节点开头的 `~~~` 解析为围栏代码块的起始标记 `FencedCode/CodeMark`；Live Preview 随后按通用代码标记规则隐藏 `CodeMark`，造成三个字符一起消失。
+- 本项目的一个节点是一段独立单行内容，既有 Markdown SPEC 已明确不支持需要跨节点连续文本的围栏代码块，因此该解析结果既不可完成，也与正在输入删除线分隔符冲突。
+
+### 修复
+
+- `src/components/markdown/markdownLanguage.ts`：从节点 Markdown 子集中移除 `FencedCode` 解析；保留 `InlineCode`，不改变反引号行内代码。
+- 未增加 `StrikethroughMark`、字符 `~` 或删除线装饰特判；粗体、斜体、删除线、高亮和行内代码继续共用既有 Live Preview 显示/隐藏机制。
+- `src/components/markdown/markdownLanguage.test.ts` 与 `src/components/markdown/markdownDecorations.test.ts`：新增语法树边界测试和真实逐字符输入 `~ / ~~ / ~~~ / ~~~~` 回归。
+
+### 验证
+
+- 定向测试通过：3 个测试文件/75 条测试，覆盖节点 Markdown 语言、Live Preview 和 InlineEditor。
+- 完整 `npm run check` 通过：模块边界、36 个测试文件/275 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- `git diff --check` 通过。
+- README 暂不更新，待用户实际验收本轮修复后再按项目约定同步。
+
+## 2026-07-29：文件拖放接收区域修正
+
+### 用户反馈
+
+- 用户指出“支持拖放”没有可见使用场景，实际从系统文件管理器把文件拖入笔记时没有反应。
+- 根因是文件 `dragover/drop` 监听只挂在 CodeMirror 内层；拖到节点内容外层空白、编辑器边缘或节点行内容区域时，事件未进入该监听。
+
+### 实现
+
+- `src/components/InlineEditor.tsx`：在 `.inline-editor-shell` 增加文件拖放接收，文件拖入整个编辑器壳层时阻止浏览器打开文件、设置复制效果，并复用既有附件保存、异步占位和 Markdown 插入流程。
+- 保留 CodeMirror 内层监听，确保拖到文字内容时仍按编辑器坐标设置插入位置；坐标计算异常时回退到当前选区，不影响附件插入。
+- 普通文本拖放不被文件处理器拦截，避免破坏 CodeMirror 原有文本拖拽。
+- 用户真实验收仍无反应后复盘：上一版测试只模拟事件打到编辑器壳层，没有覆盖 Windows 资源管理器真实拖入时命中节点行、按钮或行内空白的路径。
+- `src/components/InlineEditor.tsx`：补充文档捕获级文件拖放兜底，根据鼠标落点定位当前节点行并转交给该行编辑器；同时扩大文件拖动识别，兼容真实 `DataTransfer` 的 `Files` 类型和 drop 阶段的 `files` 列表。
+- 继续核查桌面端后确认真正的系统边界：Tauri 2 在 Windows 默认启用 WebView 原生拖放接管，官方配置说明明确指出这会阻止前端使用 HTML5 文件拖放；此前 JSDOM 和浏览器预览都不经过这一层，因此会出现自动测试通过而桌面应用无反应。
+- `src-tauri/tauri.conf.json`：为主窗口设置 `dragDropEnabled: false`，项目当前未使用 Tauri 原生拖放事件，关闭接管后由前端统一处理文件拖入。
+
+### 验证
+
+- `src/components/InlineEditor.test.tsx` 新增编辑器壳层文件 `dragover/drop`、节点行外层文件 `drop`、附件插入和普通文本拖放回归测试。
+- 定向测试通过：1 个测试文件/21 条测试。
+- 配置字段与已安装的 Tauri 2 schema 对照确认：Windows 前端 HTML5 拖放必须关闭 `dragDropEnabled`。
+- 完整 `npm run check` 通过：模块边界、35 个测试文件/261 条测试、TypeScript/生产构建、Rust 格式与编译均正常；仅有既有 CodeMirror 分包体积警告。
+- `npx tauri build --debug --no-bundle` 已成功解析新配置并完成前端构建，最终链接因正在运行的 `src-tauri/target/debug/tauri-app.exe` 被 Windows 锁定而停止；未强制结束用户进程。桌面端真实拖放仍需关闭并重新启动窗口后验收。
+- README 暂不更新，待用户实际验收本轮拖放修复后再同步当前能力。
+
+## 2026-07-29：统一输入菜单与文件插入流程
+
+### 用户确认
+
+- 用户认可“直接操作 + 命令菜单 + Markdown 快捷语法”三层并存的整体方向；具体触发按键暂不确定，先定义与按键无关的语义。
+- 用户确认所谓“命令分类”只应是菜单内部的功能分组，不要求先选分类；文档统一改称“菜单功能分组”。
+- 文件只保留一个“插入文件”入口，选择后自动识别预览类型，不为图片、音频、视频、PDF 等分别设置按钮；未来只有录音、拍照等不同采集流程才考虑独立动作。
+
+### 设计决策
+
+- `docs/编辑规范.md` 新增统一输入与插入语义：格式、节点、文件和未来 Supertag 使用同一套命令概念，可由菜单、按钮、快捷键、拖放或粘贴触发。
+- 文件选择、拖放和剪贴板文件统一走附件插入事务，使用稳定占位项、处理中/成功/失败状态、多文件顺序保持、重试与清理规则；处理中止留待后续。
+- 网址粘贴按选区和安全资源类型区分普通链接与远程图片；纯文本多行粘贴沿用现有节点拆分，不强制改写 Markdown。
+- 附件、链接、节点链接和待办继续作为原子内容单元；每次用户意图形成可理解的撤销单元，Live Preview 不改变持久化 Markdown。
+- 预留 `insertAttachment`、`insertNodeLink`、`applySupertag`、`insertField` 等语义命令边界；Supertag 字段可复用附件组件，但字段数据不写入二进制附件记录。
+- `docs/PROJECT_INDEX.md` 同步登记实现与回归入口；保持现有节点、附件、Markdown 和同步数据格式不变。
+
+### 实现
+
+- `src/components/EditorCommandMenu.tsx`：新增节点末端的单一 `+` 菜单，支持搜索和“格式 / 结构 / 节点 / 文件”视觉分组；首批复用现有 Markdown 命令，并提供节点链接和唯一的“插入文件”入口。具体键盘触发方式仍未确定。
+- `src/components/markdown/markdownCommands.ts`：在既有行内标记命令上补充标题、引用、待办前缀切换及通用文本插入，菜单与快捷键调用同一命令实现。
+- `src/components/attachmentInsertion.ts`：集中生成安全转义的附件 Markdown，并按真实选区、相邻空白和用户选择顺序规划一次性插入。
+- `src/components/attachmentUploadState.ts`：使用 CodeMirror 状态字段维护处理中的零数据占位范围；范围随文档变化映射，避免异步完成后插到过期光标位置。
+- `src/components/InlineEditor.tsx`：文件选择、多选、剪贴板文件和文件拖放统一调用同一流程；并行保存后按选择顺序插入。全部失败保留原选区，部分失败只重试失败项，菜单展示首个错误原因。
+- `src/store/useNotebookStore.ts`：`addAttachment` 收敛为只保存并返回 `AttachmentRecord`，不再隐式把 Markdown 追加到节点末尾；Markdown 插入由持有真实选区的编辑器负责。
+- `src/components/TreeRow.tsx`：移除原有单文件、有限扩展名的回形针入口，避免与统一菜单形成两套文件行为。
+- `src/App.css` 与 `src/components/editorTheme.ts`：增加紧凑菜单、单一 `+` 触发器和文件处理中占位样式；菜单打开时允许越过短树列表边界。
+- 当前未实现网址智能粘贴、处理中止，以及撤销 Markdown 时同步删除无引用附件记录；文档明确保留为后续工作，不把目标语义误记为现状。
+
+### 验证
+
+- 定向测试通过：4 个测试文件/57 条测试，覆盖菜单格式命令、节点链接、多文件顺序、文件粘贴、异步锚点映射、失败保留选区与重试、附件 Store 不隐式改写 Markdown。
+- TypeScript `npx tsc --noEmit` 通过。
+- 全量并发测试首次运行时，后台动态导入笔记面板超过测试库默认 1 秒；该生命周期测试单独运行通过，已仅为其真实异步加载断言设置 3 秒上限，应用加载逻辑和其他断言不变。
+- 完整 `npm run check` 已通过：模块边界、35 个测试文件/258 条测试、TypeScript/生产构建、Rust 格式与编译均正常；仅有既有 CodeMirror 分包体积警告。
+- 应用内浏览器实测通过：`+` 菜单打开、搜索筛选、格式命令、唯一多选文件入口和真实文本附件预览均正常，菜单无横向溢出，控制台无警告或错误。
+
+### 下一步
+
+- 用户实际验收通过；按项目约定已同步更新 `README.md` 当前能力。
+
+## 2026-07-29：折叠附件紧凑尺寸与滚动条槽位
+
+### 修改
+
+- 用户确认折叠按钮黑框和标题栏元素间距已经正常，只剩折叠附件尺寸过大；折叠态改为内容自适应宽度，移除完整预览的内边距、背景和可见边框，标题栏保持树行高度。
+- `.content-area`、`.settings-page` 与 `.dashboard` 预留稳定的双侧滚动条槽位，纵向滚动条出现或消失时不再挤压横向居中排版。
+
+### 验证
+
+- 修改后的完整 `npm run check` 已通过：34 个测试文件/244 条测试、模块边界、TypeScript/生产构建、Rust 格式与编译均正常；仅有既有 CodeMirror 分包体积警告。
+- 用户在切换到统一输入需求前尚未完成这一补充的最终视觉验收，因此 README 暂不更新。
+
+## 2026-07-28：附件预览支持独立折叠
+
+### 范围与决策
+
+- 用户确认图片附件、音频、视频、PDF 和文本预览使用统一的可折叠标题栏；普通文件项与远程 Markdown 图片保持原行为。
+- 折叠状态按“节点 ID + 附件 ID”作为当前设备视图偏好保存，不进入 Markdown、附件记录、操作日志或同步协议。同一附件在不同节点中的展开状态互不影响，新位置默认展开。
+- 为未来 Tana 式 Supertag 保持边界：附件预览组件只依赖节点与附件上下文，可供字段引用复用；Supertag、字段与关系仍属于节点模型，不写入二进制附件记录。
+- `src/components/markdown/attachmentPreviewPreferences.ts`：新增容错的本机折叠偏好读写，存储键独立于工作区持久化。
+- `src/components/markdown/markdownEditorContext.ts` 与 `src/components/InlineEditor.tsx`：给 Markdown 扩展传递当前节点 ID，使预览状态可按出现位置隔离；GhostEditor 继续使用无节点上下文，不提前产生视图偏好。
+- `src/components/markdown/markdownWidgets.ts`：图片附件、音频、视频、PDF 和文本统一使用标题栏，显示类型图标、文件名、大小、折叠箭头与系统打开入口；点击箭头或标题栏空白切换。收起后卸载预览正文，文本读取同时中止。
+- `src/components/markdown/markdownDecorations.ts`：登记图片附件进入统一可折叠组件，远程图片继续沿用原有图片组件。
+- `src/components/editorTheme.ts`：补充稳定标题栏尺寸、箭头旋转、折叠态、文件大小和各类正文布局。
+- `docs/MARKDOWN_SPEC.md` 与 `docs/PROJECT_INDEX.md`：记录交互语义、设备边界、Supertag 兼容方向和回归入口。README 暂不更新，待用户实际验收后再同步。
+
+### 验证
+
+- 定向测试通过：4 个测试文件/50 条测试，覆盖本机偏好容错、按节点隔离、重新挂载保持状态、折叠后正文卸载及现有附件预览。
+- TypeScript `npx tsc --noEmit` 与 `git diff --check` 通过。
+- 待完成完整 `npm run check` 与应用内浏览器实测。
+
+## 2026-07-28：扩展附件原生预览类型
+
+### 范围与决策
+
+- 用户确认一次加入浏览器/WebView 可合理内嵌的附件类型：图片、音频、视频、PDF、文本与常见代码；其余格式继续由系统应用打开。
+- 保持现有 `attachment://<id>`、附件记录、SQLite 与同步数据格式不变，不开放 Markdown HTML，也不引入按扩展名单独实现的播放器。
+- `src/components/markdown/attachmentPreview.ts`：新增独立的 MIME/扩展名分类规则，将附件归为音频、视频、PDF、文本或普通文件；图片继续沿用原有图片路径。
+- `src/components/markdown/markdownWidgets.ts`：新增原生 `<audio>`、`<video>`、PDF `<iframe>` 和纯文本 `<pre>` 预览。所有内嵌组件保留系统打开入口；文本通过 `textContent` 展示，不执行附件内容，并限制为 512 KiB。读取失败、文件超限或类型未知时提供明确回退。
+- `src/components/markdown/markdownInteractions.ts`：附件快照补充文件大小，供文本预览上限判断；继续只接受 Store 已登记且具有受控本地 URL 的附件。
+- `src/features/notebook/hooks/useNodeRangeSelection.ts`：把媒体、内嵌框和附件预览容器纳入交互控件排除范围，避免拖动播放进度、音量或滚动预览时触发节点范围选择。
+- `src/components/editorTheme.ts`：补充附件预览的稳定尺寸、媒体控件、PDF 框、文本滚动区与打开按钮样式。
+- `docs/MARKDOWN_SPEC.md` 与 `docs/PROJECT_INDEX.md`：记录支持范围、安全边界、实现位置和回归入口。README 暂不更新，待用户实际验收有效后再同步。
+
+### 验证
+
+- 定向测试通过：`src/components/markdown/attachmentPreview.test.ts` 与 `src/components/markdown/markdownDecorations.test.ts`，共 35 条测试。
+- TypeScript `npx tsc --noEmit` 与 `git diff --check` 通过。
+- 完整 `npm run check` 通过：模块边界、33 个测试文件/241 条测试、TypeScript/生产构建、Rust 格式与 Rust 编译均正常；Vite 仅提示既有的 CodeMirror 编辑器分包超过 500 kB。
+- 应用内浏览器实测：通过正常附件上传流程预览 `docs/MARKDOWN_SPEC.md`，文本以 560px 上限宽度的受控滚动区域展示，带系统打开入口，未生成 `script` 节点，控制台无警告或错误。临时验收节点与附件已通过应用既有删除操作清理。
+
 ## 2026-07-28：修复链接菜单在短节点列表中被裁剪
 
 ### 问题与原因
@@ -572,8 +797,137 @@
 
 - 定向 `NotebookPanel` 测试通过：1 个测试文件/37 条测试。
 - 完整 `npm run check`：通过（模块边界、31 个测试文件/225 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+
+### Ctrl 快捷键统一输入菜单与光标定位
+
+- 用户确认采用“单独按下并松开 `Ctrl`”作为统一输入菜单快捷键；组合键继续保留原有编辑器语义，中文输入法不使用 `/` 作为入口。
+- `src/components/EditorCommandMenu.tsx`：把菜单状态改为带锚点的弹层状态。单独 `Ctrl` 松开时读取 CodeMirror 当前光标坐标，点击 `+` 时读取按钮矩形；两种入口共用菜单内容、搜索和执行逻辑。
+- 菜单通过 `createPortal` 挂到 `document.body`，使用 `position: fixed`，避免树行动画、裁剪和祖先变换影响定位。`calculateCommandMenuPosition` 负责下方空间不足时翻到光标上方，以及左右边缘收进视口。
+- `Ctrl` 只有在编辑器或菜单拥有焦点时才会预备；按下期间出现其他按键、指针点击、窗口失焦或输入法 composing 都会取消，因而 `Ctrl+B/Z/C` 等组合键不会误开菜单。菜单打开时再次单独松开 `Ctrl` 可关闭。
+- 菜单支持直接搜索、上下键循环选择、`Enter` 执行、`Esc` 关闭；当前项提供明确选中态。文件入口仍保持单一“插入文件”动作。
+- `src/components/EditorCommandMenu.test.ts` 与 `src/components/InlineEditor.test.tsx`：覆盖光标定位、上下翻转、左右收边、Ctrl 开关、组合键排除、搜索 Enter 执行和焦点恢复。
+- 验证：`npm run check` 通过（模块边界、36 个测试文件/266 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告，`git diff --check` 无空白错误。
+- README 暂不更新，待用户实际验收本轮快捷键和弹层定位后再按项目约定同步当前能力。
+
+### Ctrl 菜单键盘焦点修正
+
+- 用户实际验收发现：菜单虽然显示，但输入字符和方向键仍作用于笔记，没有进入菜单搜索框。
+- 根因是菜单首次挂载时需要先以 `visibility: hidden` 测量尺寸；旧逻辑在隐藏阶段调用搜索框 `focus()`。jsdom 接受该聚焦，因此原测试通过，但 Chromium/Tauri 会拒绝聚焦不可见控件，键盘焦点继续留在 CodeMirror。
+- `src/components/EditorCommandMenu.tsx`：把自动聚焦改为两阶段时序，先完成菜单测量和视口定位，菜单可见后再在 layout effect 中同步聚焦搜索框；关闭菜单时同步清除待聚焦标记。
+- `src/components/InlineEditor.test.tsx`：新增键盘所有权回归，确认菜单已完成定位并可见后搜索框才拥有焦点，搜索输入和方向键不会改变原笔记内容。
+- 定向验证通过：`src/components/EditorCommandMenu.test.ts` 与 `src/components/InlineEditor.test.tsx`，共 27 条测试。
+- 完整 `npm run check` 通过（模块边界、36 个测试文件/267 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- README 继续暂不更新，待用户重新验收本轮焦点修正后再按项目约定同步。
+
+### Ctrl 菜单定位稳定性与关闭焦点修正
+
+- 用户继续验收发现：输入搜索内容后菜单位置会变化，关闭菜单后编辑器焦点丢失。
+- 根因一是菜单定位 layout effect 依赖搜索内容和文件状态；筛选导致菜单高度改变时会用新高度重新计算上下翻转位置。现改为每次打开只按完整菜单尺寸定位一次，本次打开期间筛选结果变化不再移动弹层。
+- 根因二是关闭菜单只卸载搜索框，没有明确归还焦点。`src/components/EditorCommandMenu.tsx` 现在区分关闭原因：`Ctrl`、`Esc`、再次点击 `+`、执行命令和文件流程结束会把焦点恢复到原 CodeMirror；点击菜单外部则尊重用户点击的新目标，不抢回焦点。
+- `src/components/InlineEditor.test.tsx`：新增可变菜单高度回归，锁定搜索前后 `left/top` 不变；覆盖 `Esc` 和再次单独 `Ctrl` 关闭后编辑器恢复焦点。
+- 定向验证通过：`src/components/EditorCommandMenu.test.ts` 与 `src/components/InlineEditor.test.tsx`，共 28 条测试。
+- 完整 `npm run check` 通过（模块边界、36 个测试文件/268 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- README 继续暂不更新，待用户实际验收本轮两项修正后再按项目约定同步。
+
+### Ctrl 菜单改为光标邻边锚定
+
+- 用户指出固定菜单左上角并不合理：菜单位于光标上方时，筛选导致高度缩短会在菜单与光标之间留下大片空白。
+- `src/components/EditorCommandMenu.tsx`：定位结果显式记录 `above/below` 放置方向。首次打开按完整菜单尺寸决定显示方向，后续筛选只重新计算同方向的位置，不允许菜单因高度变化跨到光标另一侧。
+- 菜单位于光标下方时固定顶边与光标的间距；位于光标上方时固定底边与光标的间距。筛选结果变少时菜单向锚点收缩，始终贴近当前光标或 `+` 按钮。
+- `src/components/EditorCommandMenu.test.ts` 与 `src/components/InlineEditor.test.tsx`：覆盖上方菜单缩短后底边保持锚定、横向位置不变，以及关闭后编辑器焦点恢复。
+- 定向验证通过：2 个测试文件/29 条测试。
+- 完整 `npm run check` 通过（模块边界、36 个测试文件/269 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- README 继续暂不更新，待用户实际验收本轮锚定行为后再按项目约定同步。
+
+### Markdown 菜单格式显示与结构光标修正
+
+- 用户发现两个问题：菜单插入删除线后看不到 `~` 控制符；标题、引用、待办等“结构”命令插入或移除前缀后光标位置不正确。
+- `src/components/markdown/markdownDecorations.ts`：Live Preview 的边界显示从“仅空光标”扩展为“空光标或当前选区位于格式语法范围内”时显示控制符。选中的文本被加上 `~~`、`**` 等标记后，源码控制符保持可见，避免用户误以为命令没有插入。
+- `src/components/markdown/markdownCommands.ts`：块级前缀命令现在显式按前缀增删长度映射全部 CodeMirror 选区；添加标题/引用/待办前缀时光标和选区右移，移除时左移并在前缀内部安全收敛到文档开头。
+- `src/components/markdown/markdownCommands.test.ts`、`src/components/markdown/markdownDecorations.test.ts`、`src/components/InlineEditor.test.tsx`：覆盖结构前缀映射、选中删除线控制符显示以及菜单真实执行后的编辑器状态。
+- 验证：完整 `npm run check` 通过（模块边界、36 个测试文件/272 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- README 暂不更新，待用户实际验收本轮 Markdown 命令行为后再按项目约定同步。
+
+### 删除线输入法组合输入稳定性
+
+- 用户复测发现：插入删除线后开始中文输入时，候选框只闪现后消失，输入内容和落点也会异常。
+- 根因是输入法 composition 期间 Live Preview 仍随语法树变化隐藏 `~~` 标记并建立/拆除原子范围；这会改写 contenteditable DOM，浏览器将其视为 composition 目标变化并结束输入法组合。
+- `src/components/markdown/markdownDecorations.ts`：构建装饰时读取 `EditorView.composing`。composition 活跃期间临时按源码模式处理，保留原始 Markdown 和可编辑位置，不创建隐藏标记、组件替换或原子范围；composition 结束后由焦点/文档更新恢复 Live Preview。
+- `src/components/markdown/markdownDecorations.test.ts`：新增 compositionstart/输入/compositionend 回归，确认 `~~~~` 中输入中文后原始 `~~中文~~` 保持稳定。
+- README 暂不更新，待用户实际验收输入法行为后再按项目约定同步。
+
+### 格式标记统一语义更正
+
+- 用户澄清：删除线 `~~` 不需要特殊可见性，必须和粗体、斜体、高亮、行内代码完全使用同一套语法预览规则。
+- `src/components/markdown/markdownDecorations.ts`：恢复 `StrikethroughMark` 与其他格式标记共用通用隐藏标记；所有格式控制符统一使用普通非原子标记，真正的链接/附件组件才使用替换和原子范围。
+- `src/components/markdown/markdownDecorations.test.ts`、`docs/MARKDOWN_SPEC.md`：回归为统一格式语义，确认删除线隐藏控制符但不进入原子范围。
+- 验证：完整 `npm run check` 通过（模块边界、36 个测试文件/273 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- README 暂不更新，待用户实际验收删除线和中文输入后再按项目约定同步。
 - 用户实际验收通过：节点预览期间内容选区高亮正确隐藏，拖回起始节点后文字选区正确恢复。
 - 按项目约定同步更新 `README.md` 的当前能力，补充连续可编辑画布与可逆的文字/节点渐进范围选择。
+
+### 附件导入改为桌面原生路径链路
+
+- 用户明确本项目定位为本地优先桌面 app，不需要浏览器兼容，也不需要二进制 IPC 兜底；附件导入应使用 app 自己的存储目录。
+- `src-tauri/tauri.conf.json`：恢复 `dragDropEnabled`，启用 Tauri 原生文件拖放事件。
+- `src-tauri/src/lib.rs`、`src-tauri/src/attachments.rs`：新增 `save_attachment_from_path` 命令。Rust 从源路径分块读取，在同一遍读取中计算 SHA-256 并复制到 app 附件目录，临时文件同步落盘后原子改名；返回名称、MIME、大小、哈希和本地路径。
+- `src/platform/nativeAttachments.ts`：使用 Tauri dialog 选择本机路径，并监听原生拖放路径。
+- `src/platform/attachments.ts`、`src/store/useNotebookStore.ts`、`src/components/InlineEditor.tsx`：附件状态改为路径来源，前端不再调用 `File.arrayBuffer()`，也不再创建 Blob URL 或走浏览器兜底。
+- `src/components/EditorCommandMenu.tsx`：插入文件改为原生多选路径；剪贴板文件提示使用桌面拖放或插入文件入口。
+- 测试已迁移至路径语义，覆盖原生选择、多文件顺序、目标行拖放、错误重试、剪贴板拒绝和 Store 元数据写入。
+- 验证：定向附件测试 2 个文件/44 条测试通过；完整 `npm run check` 通过（模块边界、35 个测试文件/260 条测试、生产构建、Rust 格式和 Rust 编译）。Vite 仅提示既有的 editor chunk 超过 500 kB 警告。
+- 用户实际验收通过：桌面路径附件导入符合预期。
+- 按项目约定同步更新 `README.md`，明确附件通过桌面原生多选和资源管理器拖放导入，并复制到应用附件目录，导入后不依赖原文件。
+
+### 减少缩进的页面边界
+
+- 用户发现当前页面的直接子级执行减少缩进后仍会生效；预期页面根应是提升操作不可跨越的边界。
+- 根因是 `outdentNode` 只依据持久化父链移动节点，不知道当前活动页面根；在具体笔记页会把直接子级移出页面，在工作区根页面还可能因相对虚拟根计算而改变顺序。
+- `src/domain/commands/moveNode.ts`：`outdent` 命令显式携带 `boundaryRootId`；目标节点的父节点等于页面根时返回原状态，更深层节点继续沿用原提升规则。
+- `src/store/useNotebookStore.ts`：调用提升命令时传入操作发生时的 `activeRootId`；被拒绝的操作不持久化、不追加操作日志。
+- `src/domain/commands/nodeCommands.test.ts` 与 `src/store/useNotebookStore.test.ts`：覆盖页面直接子级保持原父节点、命令报告无变化且 Store 不新增操作日志。
+- `docs/DOMAIN_RULES.md`：补充当前页面根不可跨越的提升边界。项目结构与 SPEC 索引不变，继续由领域命令和 Store 既有索引覆盖。
+- README 暂不更新，待用户实际验收本轮修复后按项目约定处理。
+
+### 验证补充
+
+- 定向测试通过：`src/domain/commands/nodeCommands.test.ts` 与 `src/store/useNotebookStore.test.ts`，共 35 条测试。
+- 完整 `npm run check`：通过（模块边界、32 个测试文件/231 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- 用户实际验收通过：页面直接子级减少缩进保持不动，页面内更深层节点仍可正常提升。
+- 按项目约定同步更新 `README.md`，明确提升操作不能越过当前页面根。
+
+### 页面前进与后退导航
+
+- 用户确认需求只针对页面导航变化：例如从“主页 / 所有笔记”进入“主页 / 设置”后，可返回所有笔记并再次前进到设置；不扩展为编辑记录或持久化浏览历史。
+- `src/app/navigationHistory.ts`：新增启动周期内的纯页面历史，位置由当前 `WorkspaceView` 与面包屑根节点 ID 组成；相同位置不重复入栈，后退后产生新导航时清除原前进分支。
+- `src/app/AppShell.tsx`：统一记录侧栏、主页入口、设置入口和具体笔记根节点的页面变化；恢复历史时复用既有异步面板加载流程，并避免把恢复动作重新写入历史。
+- `src/app/components/TopBar.tsx` 与 `src/App.css`：顶部面包屑左侧新增前进、后退图标按钮，无法使用时显示禁用态；支持 `Alt+左方向键` 和 `Alt+右方向键`。
+- `src/app/navigationHistory.test.ts`、`src/app/AppShell.test.tsx`、`src/app/components/TopBar.test.tsx`：覆盖历史移动、去重、分支清理、按钮状态及“所有笔记 → 设置 → 后退 → 前进”集成流程。
+- 应用内浏览器实测：初始按钮均禁用；进入所有笔记再进入设置后，后退按钮正确启用，页面面包屑与设置内容正确显示。
+- 用户实际验收通过；按项目约定同步更新 `README.md` 当前能力，并在 `docs/PROJECT_INDEX.md` 增加导航历史实现与回归入口。
+
+### 验证补充
+
+- 导航定向测试通过：3 个测试文件/6 条测试。
+- 生产构建通过；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- 完整 `npm run check`：通过（模块边界、32 个测试文件/229 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+
+### 浏览器默认视觉统一
+
+- 用户发现节点范围选择松手后笔记页出现黑边；根因是选择提交时画布按既有焦点所有权规则获得程序化焦点，而带 `tabIndex={-1}` 的 `.content-area` 没有覆盖浏览器默认焦点轮廓。
+- `src/App.css`：移除画布的默认焦点轮廓，不改变节点选择提交、键盘焦点归属或 CodeMirror 行为。
+- 统一按钮的原生外观与禁用光标，移除移动端点击高亮；可交互控件继续保留键盘 `:focus-visible`，但改用应用叶绿色焦点标识，节点圆点与层级线沿用其已有专属反馈。
+- 将可编辑文本的浏览器默认选区色、设置输入框自动填充底色以及 Chromium/Firefox 默认滚动条替换为应用色；保留文本选择、密码管理、自动填充和滚动能力。
+- 未使用全局 `outline: none` 取消所有反馈，也未隐藏滚动条，避免破坏键盘可访问性与滚动可发现性。
+- README 暂不更新，待用户实际验收默认视觉清理后再决定是否记录为用户可见能力。
+
+### 验证补充
+
+- 完整 `npm run check`：通过（模块边界、32 个测试文件/229 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+- 应用内浏览器实测：`.content-area` 获得焦点后的计算样式为 `outline-style: none`，画布黑边消失；普通按钮通过键盘聚焦时仍显示应用叶绿色焦点轮廓。
+- 浏览器控制台无警告或错误。
+- 用户实际验收通过：画布焦点黑边及其他浏览器默认视觉清理均符合预期。
+- 按项目约定同步更新 `README.md`，补充统一控件视觉与保留键盘焦点反馈。
 
 ### 节点预览文字高亮修正
 

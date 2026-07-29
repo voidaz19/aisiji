@@ -192,7 +192,10 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       const current = state.nodes[nodeId];
       if (!current) return null;
       const splitsActiveRoot = state.activeRootId === nodeId;
-      const createsBeforeCurrent = !splitsActiveRoot && before === "" && after === current.markdown;
+      const createsBeforeCurrent = !splitsActiveRoot
+        && current.markdown.length > 0
+        && before === ""
+        && after === current.markdown;
       // When an expanded node already has children, Enter should keep the
       // new line directly beneath it instead of placing a sibling after the
       // whole visible subtree.
@@ -225,7 +228,10 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       commit(next, createOperation("update_markdown", nodeId, { markdown }, previous?.revision ?? 0));
     },
     indent: (nodeId) => moveNode({ type: "indent", nodeId }, createOperation("indent", nodeId, {})),
-    outdent: (nodeId) => moveNode({ type: "outdent", nodeId }, createOperation("outdent", nodeId, {})),
+    outdent: (nodeId) => moveNode(
+      { type: "outdent", nodeId, boundaryRootId: get().activeRootId },
+      createOperation("outdent", nodeId, {}),
+    ),
     moveToSlot: (nodeId, parentId, beforeId) => moveNode(
       { type: "slot", nodeId, parentId, beforeId },
       createOperation("move_slot", nodeId, { parentId, beforeId }),
@@ -330,15 +336,24 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       const next = { ...get(), fields: { ...get().fields, [fieldId]: { ...field, value, updatedAt: Date.now() } } };
       commit(next, createOperation("set_field", fieldId, { field: next.fields[fieldId] }));
     },
-    addAttachment: async (nodeId, file) => {
+    addAttachment: async (nodeId, source) => {
       const id = newId("attachment");
-      const { sha256, localPath } = await storeAttachment(file, id);
-      const attachment: AttachmentRecord = { id, nodeId, name: file.name, mime: file.type || "application/octet-stream", size: file.size, sha256, localPath, remotePath: `workspace/blobs/${sha256}/${id}`, pinned: false, createdAt: Date.now() };
+      const stored = await storeAttachment(source, id);
+      const attachment: AttachmentRecord = {
+        id,
+        nodeId,
+        name: stored.name,
+        mime: stored.mime,
+        size: stored.size,
+        sha256: stored.sha256,
+        localPath: stored.localPath,
+        remotePath: "workspace/blobs/" + stored.sha256 + "/" + id,
+        pinned: false,
+        createdAt: Date.now(),
+      };
       const next = { ...get(), attachments: { ...get().attachments, [id]: attachment } };
       commit(next, createOperation("add_attachment", id, { attachment }));
-      const syntax = attachment.mime.startsWith("image/") ? `![${attachment.name}](attachment://${id})` : `[${attachment.name}](attachment://${id})`;
-      const current = get().nodes[nodeId]?.markdown ?? "";
-      get().editMarkdown(nodeId, current ? `${current} ${syntax}` : syntax);
+      return attachment;
     },
   };
 });

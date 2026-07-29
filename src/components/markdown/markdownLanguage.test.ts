@@ -49,6 +49,12 @@ describe("node Markdown language", () => {
     expect(nodeNames("`**code**`")).not.toContain("StrongEmphasis");
   });
 
+  it("keeps an in-progress strike delimiter as text instead of a code fence", () => {
+    expect(nodeNames("~~~")).not.toContain("FencedCode");
+    expect(nodeNames("~~~")).not.toContain("CodeMark");
+    expect(nodeNames("`code`")).toContain("InlineCode");
+  });
+
   it("preserves nested syntax nodes", () => {
     const names = nodeNames("**bold *italic***");
     expect(names).toContain("StrongEmphasis");

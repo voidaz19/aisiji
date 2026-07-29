@@ -40,6 +40,7 @@ src-tauri/src/
 
 | 能力 | 主要实现 | 回归入口 |
 | --- | --- | --- |
+| 页面前进/后退导航历史 | src/app/navigationHistory.ts、src/app/AppShell.tsx、src/app/components/TopBar.tsx | src/app/navigationHistory.test.ts、src/app/AppShell.test.tsx、src/app/components/TopBar.test.tsx |
 | 父子节点索引与可见树展开 | src/domain/tree.ts | src/domain/tree.test.ts |
 | 拖拽槽位索引复用 | src/domain/dropSlots.ts | src/domain/dropSlots.test.ts |
 | 永久清理软删除数据 | src/domain/purgeDeletedNodes.ts | src/domain/purgeDeletedNodes.test.ts |
@@ -48,9 +49,13 @@ src-tauri/src/
 | 附件引用保留与物理删除 | src/domain/purgeDeletedNodes.ts、src-tauri/src/attachments.rs | src/domain/purgeDeletedNodes.test.ts |
 | CodeMirror 近视口挂载 | src/components/InlineEditor.tsx | src/components/InlineEditor.test.tsx |
 | Markdown 语法树预览与格式命令 | src/components/markdown/ | src/components/markdown/*.test.ts |
-| 外链安全打开与附件预览适配 | src/platform/externalNavigation.ts、src/components/markdown/markdownInteractions.ts | src/platform/externalNavigation.test.ts、src/components/markdown/markdownDecorations.test.ts |
+| 统一输入菜单与附件插入流程 | src/components/EditorCommandMenu.tsx、src/components/InlineEditor.tsx、src/components/attachmentInsertion.ts、src/components/attachmentUploadState.ts、src/components/markdown/markdownCommands.ts、src/store/useNotebookStore.ts | src/components/EditorCommandMenu.test.ts、src/components/InlineEditor.test.tsx、src/components/attachmentInsertion.test.ts、src/components/markdown/markdownCommands.test.ts、src/store/useNotebookStore.test.ts |
+| Windows/Tauri 原生路径拖放与附件导入 | src/platform/nativeAttachments.ts、src/platform/attachments.ts、src/components/InlineEditor.tsx、src-tauri/tauri.conf.json、src-tauri/src/attachments.rs | src/components/InlineEditor.test.tsx、src/store/useNotebookStore.test.ts、Tauri 配置 schema |
+| 外链安全打开、附件预览与本机折叠偏好 | src/platform/externalNavigation.ts、src/components/markdown/markdownInteractions.ts、src/components/markdown/attachmentPreview.ts、src/components/markdown/attachmentPreviewPreferences.ts、src/components/markdown/markdownEditorContext.ts、src/components/markdown/markdownWidgets.ts | src/platform/externalNavigation.test.ts、src/components/markdown/attachmentPreview.test.ts、src/components/markdown/attachmentPreviewPreferences.test.ts、src/components/markdown/markdownDecorations.test.ts |
 | 节点链接标题补全 | src/components/markdown/nodeLinkCompletion.ts、src/components/markdown/markdownEditor.ts | src/components/markdown/markdownLanguage.test.ts |
 | Markdown 可见光标与删除语义 | src/components/markdown/markdownDecorations.ts、src/components/markdown/markdownVisibleEditing.ts、src/components/editorNavigation.ts | src/components/markdown/markdownDecorations.test.ts、src/components/InlineEditor.test.tsx |
+| 真实节点/临时草稿统一编辑目标与结构预检 | src/components/editorTarget.ts、src/components/GhostEditor.tsx、src/components/InlineEditor.tsx、src/domain/commands/moveNode.ts | src/components/editorTarget.test.ts、src/components/GhostEditor.test.tsx、src/domain/commands/nodeCommands.test.ts、src/features/notebook/NotebookPanel.test.tsx |
+| 树布局 FLIP 与占位行变化 | src/features/notebook/hooks/useTreeLayoutAnimation.ts | src/features/notebook/NotebookPanel.test.tsx |
 | 文本到节点的渐进范围选择 | src/features/notebook/hooks/useNodeRangeSelection.ts | src/features/notebook/NotebookPanel.test.tsx、docs/编辑规范.md |
 | 最近编辑页面上下文与聚合 | src/domain/recentPages.ts、src/store/useNotebookStore.ts、src/features/dashboard/DashboardPanel.tsx | src/domain/recentPages.test.ts、src/features/dashboard/DashboardPanel.test.tsx、src/store/useNotebookStore.test.ts |
 | 树块空白坐标命中 | src/components/treeHitTesting.ts | src/components/treeHitTesting.test.ts |

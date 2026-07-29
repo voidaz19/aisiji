@@ -1,14 +1,26 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { newId, ROOT_ID, type AttachmentRecord } from "../domain/model";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { planAttachmentInsertion } from "./attachmentInsertion";
+import {
+  beginPendingAttachmentUpload,
+  finishPendingAttachmentUpload,
+  pendingAttachmentUploadExtension,
+  pendingAttachmentUploadRange,
+} from "./attachmentUploadState";
 import { planMultilinePaste } from "./editorClipboard";
+import { EditorCommandMenu, type FileInsertOutcome, type FileInsertStatus } from "./EditorCommandMenu";
 import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme } from "./editorTheme";
+import { runWithEditorNode, type EditorTarget } from "./editorTarget";
 import { createMarkdownEditorExtensions } from "./markdown/markdownEditor";
 import { atMarkdownVisualEnd, atMarkdownVisualStart } from "./markdown/markdownDecorations";
+import { chooseAttachmentPaths, listenNativeFileDrop } from "../platform/nativeAttachments";
+import { hasTauriRuntime } from "../platform/runtime";
 
 interface Props {
   nodeId: string;
@@ -20,9 +32,11 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | undefined>(undefined);
   const syncingValue = useRef(false);
+  const failedPaths = useRef<readonly string[]>([]);
   const [nearViewport, setNearViewport] = useState(
     variant === "root" || typeof IntersectionObserver === "undefined",
   );
+  const [fileStatus, setFileStatus] = useState<FileInsertStatus>({ kind: "idle", message: "" });
   const editMarkdown = useNotebookStore((state) => state.editMarkdown);
   const setActiveNode = useNotebookStore((state) => state.setActiveNode);
   const createSibling = useNotebookStore((state) => state.createSibling);
@@ -33,9 +47,85 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
   const mergeWithPrev = useNotebookStore((state) => state.mergeWithPrev);
   const mergeWithNext = useNotebookStore((state) => state.mergeWithNext);
   const remove = useNotebookStore((state) => state.remove);
+  const addAttachment = useNotebookStore((state) => state.addAttachment);
   const isActiveNode = useNotebookStore((state) => state.activeNodeId === nodeId);
   const activeNodeCursor = useNotebookStore((state) => state.activeNodeCursor);
+  const editorParentId = useNotebookStore((state) => state.nodes[nodeId]?.parentId ?? ROOT_ID);
+  const editorTarget: EditorTarget = {
+    kind: "node",
+    nodeId,
+    parentId: editorParentId,
+    materialize: () => nodeId,
+  };
   const shouldMountEditor = variant === "root" || isActiveNode || nearViewport;
+
+  const insertPaths = useCallback(async (
+    paths: readonly string[],
+    targetEditor = view.current,
+  ): Promise<FileInsertOutcome> => {
+    if (!targetEditor || !paths.length) return { inserted: 0, failed: 0 };
+    const selection = targetEditor.state.selection.main;
+    const uploadId = newId("attachment-upload");
+    beginPendingAttachmentUpload(targetEditor, uploadId, selection.from, selection.to, paths.length);
+    setFileStatus({
+      kind: "loading",
+      message: paths.length === 1 ? `正在添加文件` : `正在添加 ${paths.length} 个文件`,
+    });
+
+    const results = await Promise.allSettled(paths.map((path) => addAttachment(nodeId, { path })));
+    const attachments = results
+      .filter((result): result is PromiseFulfilledResult<AttachmentRecord> => result.status === "fulfilled")
+      .map((result) => result.value);
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    failedPaths.current = paths.filter((_path, index) => results[index].status === "rejected");
+    if (view.current === targetEditor) {
+      const range = pendingAttachmentUploadRange(targetEditor, uploadId);
+      const plan = range
+        ? planAttachmentInsertion(
+          targetEditor.state.doc.toString(),
+          range.from,
+          range.to,
+          attachments,
+        )
+        : null;
+      if (plan) {
+        targetEditor.dispatch({
+          changes: { from: plan.from, to: plan.to, insert: plan.insert },
+          selection: { anchor: plan.anchor },
+          effects: finishPendingAttachmentUpload(uploadId),
+          scrollIntoView: true,
+          userEvent: "input",
+        });
+      } else {
+        targetEditor.dispatch({ effects: finishPendingAttachmentUpload(uploadId) });
+      }
+      targetEditor.focus();
+    }
+
+    if (failures.length) {
+      const firstReason = failures[0].reason instanceof Error ? failures[0].reason.message : "文件读取失败";
+      setFileStatus({
+        kind: "error",
+        message: attachments.length
+          ? `已插入 ${attachments.length} 个，${failures.length} 个失败：${firstReason}`
+          : `插入失败：${firstReason}`,
+      });
+    } else {
+      failedPaths.current = [];
+      setFileStatus({ kind: "idle", message: "" });
+    }
+    return { inserted: attachments.length, failed: failures.length };
+  }, [addAttachment, nodeId]);
+
+  const pickFiles = useCallback(async (): Promise<FileInsertOutcome> => {
+    try {
+      return await insertPaths(await chooseAttachmentPaths());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "无法选择文件";
+      setFileStatus({ kind: "error", message });
+      return { inserted: 0, failed: 1 };
+    }
+  }, [insertPaths]);
 
   useEffect(() => {
     const element = host.current;
@@ -53,7 +143,8 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     const state = EditorState.create({
       doc: value,
       extensions: [
-        ...createMarkdownEditorExtensions(),
+        ...createMarkdownEditorExtensions(nodeId),
+        pendingAttachmentUploadExtension,
         history(),
         EditorView.lineWrapping,
         keymap.of([
@@ -65,20 +156,30 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
               return true;
             },
             createChild: () => { createChild(nodeId, ""); return true; },
-            indent: () => { indent(nodeId); return true; },
-            outdent: () => { outdent(nodeId); return true; },
+            indent: (editor) => runWithEditorNode(editorTarget, editor, (targetNodeId) => {
+              indent(targetNodeId);
+              return true;
+            }),
+            outdent: (editor) => runWithEditorNode(editorTarget, editor, (targetNodeId) => {
+              outdent(targetNodeId);
+              return true;
+            }),
             backspace: (editor) => {
-              const pos = editor.state.selection.main.head;
-              const hasSelection = !editor.state.selection.main.empty;
-              if (atMarkdownVisualStart(editor, pos) && !hasSelection) { mergeWithPrev(nodeId); return true; }
-              return false;
+              return runWithEditorNode(editorTarget, editor, (targetNodeId) => {
+                const pos = editor.state.selection.main.head;
+                const hasSelection = !editor.state.selection.main.empty;
+                if (atMarkdownVisualStart(editor, pos) && !hasSelection) { mergeWithPrev(targetNodeId); return true; }
+                return false;
+              });
             },
             delete: (editor) => {
-              const docLen = editor.state.doc.length;
-              const pos = editor.state.selection.main.head;
-              const hasSelection = !editor.state.selection.main.empty;
-              if ((pos === docLen || atMarkdownVisualEnd(editor, pos)) && !hasSelection) { mergeWithNext(nodeId); return true; }
-              return false;
+              return runWithEditorNode(editorTarget, editor, (targetNodeId) => {
+                const docLen = editor.state.doc.length;
+                const pos = editor.state.selection.main.head;
+                const hasSelection = !editor.state.selection.main.empty;
+                if ((pos === docLen || atMarkdownVisualEnd(editor, pos)) && !hasSelection) { mergeWithNext(targetNodeId); return true; }
+                return false;
+              });
             },
             remove: () => { remove(nodeId); return true; },
           }),
@@ -104,6 +205,12 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
             return false;
           },
           paste: (event, editor) => {
+            const files = event.clipboardData?.files ? Array.from(event.clipboardData.files) : [];
+            if (files.length) {
+              event.preventDefault();
+              setFileStatus({ kind: "error", message: "请使用桌面文件拖放或“插入文件”导入附件" });
+              return true;
+            }
             const text = event.clipboardData?.getData("text/plain") ?? "";
             const selection = editor.state.selection.main;
             const plan = planMultilinePaste(
@@ -136,7 +243,7 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     });
     view.current = new EditorView({ state, parent: host.current });
     return () => { view.current?.destroy(); view.current = undefined; };
-  }, [nodeId, shouldMountEditor, variant]);
+  }, [nodeId, shouldMountEditor, variant, insertPaths]);
 
   useLayoutEffect(() => {
     const editor = view.current;
@@ -166,14 +273,73 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     }
   }, [isActiveNode, activeNodeCursor]);
 
+  useEffect(() => {
+    if (!hasTauriRuntime() || !shouldMountEditor) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const deviceScale = window.devicePixelRatio || 1;
+    void listenNativeFileDrop((event) => {
+      if (disposed || event.type !== "drop") return;
+      const clientX = event.position.x / deviceScale;
+      const clientY = event.position.y / deviceScale;
+      const targetRow = rowAtPoint(clientX, clientY);
+      if (targetRow?.dataset.nodeId !== nodeId) return;
+      const editor = view.current;
+      if (!editor || !event.paths.length) return;
+      const position = dropPosition(editor, clientX, clientY);
+      if (position !== null) editor.dispatch({ selection: { anchor: position } });
+      void insertPaths(event.paths, editor);
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    }).catch((error) => {
+      if (disposed) return;
+      setFileStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "无法监听桌面文件拖放",
+      });
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [insertPaths, nodeId, shouldMountEditor]);
+
   return (
     <div
-      className={`inline-editor ${variant === "root" ? "root-inline-editor" : ""}`}
-      ref={host}
-      aria-label={variant === "root" ? "根节点内容" : "节点内容"}
-      data-editor-mounted={shouldMountEditor || undefined}
+      className={`inline-editor-shell ${variant === "root" ? "root-inline-editor-shell" : ""}`}
     >
-      {!shouldMountEditor && <div className="inline-editor-placeholder">{value || " "}</div>}
+      <div
+        className={`inline-editor ${variant === "root" ? "root-inline-editor" : ""}`}
+        ref={host}
+        aria-label={variant === "root" ? "根节点内容" : "节点内容"}
+        data-editor-mounted={shouldMountEditor || undefined}
+      >
+        {!shouldMountEditor && <div className="inline-editor-placeholder">{value || " "}</div>}
+      </div>
+      {shouldMountEditor && (
+        <EditorCommandMenu
+          getEditor={() => view.current}
+          onPickFiles={pickFiles}
+          onRetryFiles={() => insertPaths(failedPaths.current)}
+          fileStatus={fileStatus}
+        />
+      )}
     </div>
   );
+}
+
+function dropPosition(editor: EditorView, clientX: number, clientY: number): number | null {
+  try {
+    return editor.posAtCoords({ x: clientX, y: clientY });
+  } catch {
+    return null;
+  }
+}
+
+function rowAtPoint(clientX: number, clientY: number): HTMLElement | null {
+  const target = typeof document.elementFromPoint === "function"
+    ? document.elementFromPoint(clientX, clientY)
+    : null;
+  return target?.closest<HTMLElement>("[data-tree-row='true'], .root-node-heading") ?? null;
 }

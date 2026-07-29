@@ -3,7 +3,7 @@ mod credentials;
 mod database;
 mod webdav;
 
-use attachments::{delete_attachments, hash_bytes, read_attachment, save_attachment};
+use attachments::{delete_attachments, read_attachment, save_attachment_from_path};
 use credentials::{load_sync_credentials, save_sync_credentials};
 use database::{
     append_operation, load_workspace, maintain_database, save_workspace, save_workspace_batch,
@@ -14,6 +14,7 @@ use webdav::{webdav_download, webdav_list, webdav_probe, webdav_upload};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_workspace,
             save_workspace,
@@ -25,8 +26,7 @@ pub fn run() {
             webdav_upload,
             webdav_download,
             webdav_list,
-            hash_bytes,
-            save_attachment,
+            save_attachment_from_path,
             read_attachment,
             delete_attachments,
             maintain_database,

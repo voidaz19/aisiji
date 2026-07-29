@@ -9,11 +9,19 @@ import {
   visibleNodesForView,
 } from "../features/notebook/model/notebookView";
 import { localDateKey } from "../shared/date";
-import type { WorkspaceView } from "../shared/workspaceView";
+import { isNotebookView, type WorkspaceView } from "../shared/workspaceView";
 import { flushWorkspacePersistence } from "../platform/workspaceRepository";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { AppSidebar } from "./components/AppSidebar";
 import { TopBar } from "./components/TopBar";
+import {
+  canNavigate,
+  createNavigationHistory,
+  navigationTarget,
+  recordNavigation,
+  sameNavigationLocation,
+  type NavigationLocation,
+} from "./navigationHistory";
 
 type NotebookPanelComponent = typeof import("../features/notebook/NotebookPanel")["NotebookPanel"];
 type SettingsPanelComponent = typeof import("../features/settings/SettingsPanel")["SettingsPanel"];
@@ -74,8 +82,13 @@ export function AppShell() {
   const [view, setView] = useState<WorkspaceView>("home");
   const [notebookView, setNotebookView] = useState<WorkspaceView>("today");
   const [notebookRootId, setNotebookRootId] = useState(ROOT_ID);
+  const [navigationHistory, setNavigationHistory] = useState(
+    () => createNavigationHistory({ view: "home", rootId: ROOT_ID }),
+  );
   const [, setLoadedPanelsVersion] = useState(0);
   const navigationRequest = useRef(0);
+  const navigationHistoryRef = useRef(navigationHistory);
+  const restoringLocation = useRef<NavigationLocation | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(
     () => typeof window === "undefined" || window.innerWidth > 720,
   );
@@ -113,6 +126,18 @@ export function AppShell() {
     [nodes, activeRoot, currentViewRootId],
   );
   const parentBreadcrumbs = activeRoot ? breadcrumbs.slice(0, -1) : breadcrumbs;
+  useLayoutEffect(() => {
+    const location = { view, rootId: activeRootId };
+    if (restoringLocation.current && sameNavigationLocation(restoringLocation.current, location)) {
+      restoringLocation.current = null;
+      return;
+    }
+    const nextHistory = recordNavigation(navigationHistoryRef.current, location);
+    if (nextHistory === navigationHistoryRef.current) return;
+    navigationHistoryRef.current = nextHistory;
+    setNavigationHistory(nextHistory);
+  }, [activeRootId, view]);
+
   const navigate = (nextView: WorkspaceView) => {
     const requestId = ++navigationRequest.current;
     const applyNavigation = () => {
@@ -137,6 +162,49 @@ export function AppShell() {
     }
     void prepareView(nextView).then(() => flushSync(applyNavigation));
   };
+  const restoreNavigationLocation = (location: NavigationLocation) => {
+    const requestId = ++navigationRequest.current;
+    const applyNavigation = () => {
+      if (requestId !== navigationRequest.current) return;
+      setView(location.view);
+      if (isNotebookView(location.view)) {
+        const fallbackRootId = location.view === "today"
+          ? (todayNode?.id ?? ensureTodayNode())
+          : ROOT_ID;
+        const nextRootId = location.rootId === ROOT_ID || nodes[location.rootId]
+          ? location.rootId
+          : fallbackRootId;
+        openRoot(nextRootId);
+        setNotebookView(location.view);
+        setNotebookRootId(nextRootId);
+      } else {
+        goToRoot();
+      }
+    };
+    if (isViewReady(location.view)) {
+      applyNavigation();
+      return;
+    }
+    void prepareView(location.view).then(() => flushSync(applyNavigation));
+  };
+  const moveInNavigationHistory = (offset: -1 | 1) => {
+    const target = navigationTarget(navigationHistoryRef.current, offset);
+    if (!target) return;
+    navigationHistoryRef.current = target.history;
+    restoringLocation.current = target.location;
+    setNavigationHistory(target.history);
+    restoreNavigationLocation(target.location);
+  };
+  useEffect(() => {
+    const handleNavigationShortcut = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      moveInNavigationHistory(event.key === "ArrowLeft" ? -1 : 1);
+    };
+    window.addEventListener("keydown", handleNavigationShortcut);
+    return () => window.removeEventListener("keydown", handleNavigationShortcut);
+  });
   const openViewRoot = () => {
     if (view === "today") {
       const nextRootId = todayNode?.id ?? ensureTodayNode();
@@ -194,7 +262,11 @@ export function AppShell() {
           activeRoot={activeRoot}
           parentBreadcrumbs={parentBreadcrumbs}
           atViewRoot={activeRootId === ROOT_ID || activeRootId === currentViewRootId}
+          canGoBack={canNavigate(navigationHistory, -1)}
+          canGoForward={canNavigate(navigationHistory, 1)}
           onToggleSidebar={() => setSidebarOpen((open) => !open)}
+          onGoBack={() => moveInNavigationHistory(-1)}
+          onGoForward={() => moveInNavigationHistory(1)}
           onNavigate={navigate}
           onOpenRoot={openRoot}
           onOpenViewRoot={openViewRoot}

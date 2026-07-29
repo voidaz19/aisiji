@@ -18,6 +18,7 @@ export interface AttachmentSnapshot {
   id: string;
   label: string;
   mime: string;
+  size: number;
   previewUrl: string | null;
   available: boolean;
 }
@@ -60,6 +61,7 @@ export function resolveAttachment(target: string, fallbackLabel: string): Attach
     id,
     label: attachment?.name || fallbackLabel || id,
     mime: attachment?.mime ?? "",
+    size: attachment?.size ?? 0,
     previewUrl: localAttachmentPreviewUrl(attachment?.localPath ?? null),
     available: Boolean(attachment?.localPath),
   };

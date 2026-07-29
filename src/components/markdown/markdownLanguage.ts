@@ -80,7 +80,9 @@ const NodeLink: MarkdownConfig = {
 const NodeMarkdownSubset: MarkdownConfig = {
   // A node is a standalone line, so reference definitions such as `[1]:url`
   // are ambiguous with user-authored labels and cannot serve later nodes.
-  remove: ["LinkReference"],
+  // Fenced blocks also cannot exist across nodes, and recognizing a bare
+  // `~~~` as a fence conflicts with typing the inline strike delimiter.
+  remove: ["LinkReference", "FencedCode"],
 };
 
 /** Parser extensions for the node-oriented Markdown subset. */

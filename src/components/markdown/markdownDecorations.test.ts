@@ -19,7 +19,7 @@ beforeEach(() => {
   useNotebookStore.setState(useNotebookStore.getInitialState(), true);
 });
 
-function createView(doc: string, anchor = 0, parentClassName = "") {
+function createView(doc: string, anchor = 0, parentClassName = "", nodeId = "test-node") {
   const parent = document.createElement("div");
   parent.className = parentClassName;
   const mount = parentClassName === "tree-list"
@@ -36,11 +36,17 @@ function createView(doc: string, anchor = 0, parentClassName = "") {
     state: EditorState.create({
       doc,
       selection: { anchor },
-      extensions: [...createMarkdownEditorExtensions(), editorTheme],
+      extensions: [...createMarkdownEditorExtensions(nodeId), editorTheme],
     }),
   });
   views.push(view);
   return view;
+}
+
+function visibleText(view: EditorView) {
+  const clone = view.contentDOM.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(".cm-live-hidden-mark").forEach((node) => node.remove());
+  return clone.textContent ?? "";
 }
 
 afterEach(() => {
@@ -56,23 +62,55 @@ describe("Markdown live preview", () => {
     const view = createView("start **bold** and `**code**`");
 
     expect(view.dom.querySelectorAll(".cm-live-bold")).toHaveLength(1);
-    expect(view.dom.querySelector(".cm-live-bold")?.textContent).toBe("bold");
-    expect(view.dom.querySelector(".cm-live-code")?.textContent).toBe("**code**");
+    expect(visibleText(view)).toBe("start bold and **code**");
+    expect(view.dom.querySelector(".cm-live-code")?.textContent).toBe("`**code**`");
   });
 
   it("reveals the current marks anywhere inside the syntax range", () => {
     const view = createView("start **bold**");
-    expect(view.contentDOM.textContent).toBe("start bold");
+    expect(visibleText(view)).toBe("start bold");
 
     view.focus();
     view.dispatch({ selection: { anchor: 8 } });
-    expect(view.contentDOM.textContent).toBe("start **bold**");
+    expect(visibleText(view)).toBe("start **bold**");
 
     view.dispatch({ selection: { anchor: 9 } });
-    expect(view.contentDOM.textContent).toBe("start **bold**");
+    expect(visibleText(view)).toBe("start **bold**");
 
     view.dispatch({ selection: { anchor: 5 } });
-    expect(view.contentDOM.textContent).toBe("start bold");
+    expect(visibleText(view)).toBe("start bold");
+  });
+
+  it("reveals formatting marks while their content remains selected", () => {
+    const view = createView("~~strike~~", 2);
+    view.focus();
+    view.dispatch({ selection: { anchor: 2, head: 8 } });
+
+    expect(visibleText(view)).toBe("~~strike~~");
+  });
+
+  it("keeps hidden formatting markers non-atomic", () => {
+    const view = createView("~~strike~~");
+
+    expect(visibleText(view)).toBe("strike");
+    expect(view.dom.querySelector(".cm-live-hidden-mark")).not.toBeNull();
+    expect(markdownAtomsAt(view, 0, "from")).toHaveLength(0);
+    expect(markdownAtomsAt(view, 8, "to")).toHaveLength(0);
+  });
+
+  it("keeps strike delimiters visible while they are typed character by character", () => {
+    const view = createView("", 0);
+    view.focus();
+
+    for (const expected of ["~", "~~", "~~~", "~~~~"]) {
+      view.dispatch({
+        changes: { from: view.state.selection.main.head, insert: "~" },
+        selection: { anchor: view.state.selection.main.head + 1 },
+        userEvent: "input.type",
+      });
+      expect(view.state.doc.toString()).toBe(expected);
+      expect(visibleText(view)).toBe(expected);
+    }
   });
 
   it("reveals only the innermost syntax range when formats are nested", () => {
@@ -82,7 +120,7 @@ describe("Markdown live preview", () => {
     view.focus();
     view.dispatch({ selection: { anchor: innerPosition } });
 
-    expect(view.contentDOM.textContent).toBe("bold *italic*");
+    expect(visibleText(view)).toBe("bold *italic*");
   });
 
   it("keeps a multi-character mark visible when the caret is inside it", () => {
@@ -90,33 +128,33 @@ describe("Markdown live preview", () => {
     view.focus();
     view.dispatch({ selection: { anchor: 7 } });
 
-    expect(view.contentDOM.textContent).toBe("**bold**");
+    expect(visibleText(view)).toBe("**bold**");
 
     view.dispatch({ selection: { anchor: 1 } });
-    expect(view.contentDOM.textContent).toBe("**bold**");
+    expect(visibleText(view)).toBe("**bold**");
   });
 
   it("hides heading spacing and reveals the prefix at the content boundary", () => {
     const view = createView("# heading", 4);
-    expect(view.contentDOM.textContent).toBe("heading");
+    expect(visibleText(view)).toBe("heading");
 
     view.focus();
     view.dispatch({ selection: { anchor: 2 } });
-    expect(view.contentDOM.textContent).toBe("# heading");
+    expect(visibleText(view)).toBe("# heading");
   });
 
   it("toggles full source for the current editor and resets it on blur", () => {
     const view = createView("prefix **bold**", 0);
     view.focus();
-    expect(view.contentDOM.textContent).toBe("prefix bold");
+    expect(visibleText(view)).toBe("prefix bold");
 
     expect(toggleMarkdownSourceMode(view)).toBe(true);
-    expect(view.contentDOM.textContent).toBe("prefix **bold**");
+    expect(visibleText(view)).toBe("prefix **bold**");
 
     const button = document.createElement("button");
     document.body.append(button);
     button.focus();
-    expect(view.contentDOM.textContent).toBe("prefix bold");
+    expect(visibleText(view)).toBe("prefix bold");
     button.remove();
   });
 
@@ -128,7 +166,7 @@ describe("Markdown live preview", () => {
     toggleMarkdownSourceMode(view);
 
     expect(view.dom.querySelector(".cm-live-task-checkbox")).toBeNull();
-    expect(view.contentDOM.textContent).toBe("[ ] todo");
+    expect(visibleText(view)).toBe("[ ] todo");
   });
 
   it("enables synthesized italic styling for fonts without an italic face", () => {
@@ -146,6 +184,8 @@ describe("Markdown live preview", () => {
 
     expect(checkbox).not.toBeNull();
     expect(checkbox?.checked).toBe(false);
+    expect(markdownAtomsAt(view, 0, "from")).toEqual([{ from: 0, to: 4, kind: "component" }]);
+    expect(markdownAtomsAt(view, 4, "to")).toEqual([{ from: 0, to: 4, kind: "component" }]);
     checkbox?.click();
 
     expect(view.state.doc.toString()).toBe("[x] todo");
@@ -166,7 +206,7 @@ describe("Markdown live preview", () => {
     const safe = createView("[site](https://example.com/path)");
     const link = safe.dom.querySelector<HTMLButtonElement>(".cm-live-link")!;
 
-    expect(safe.contentDOM.textContent).toBe("site");
+    expect(visibleText(safe)).toBe("site");
     expect(link.querySelector(".cm-live-link-icon")?.getAttribute("aria-hidden")).toBe("true");
     expect(link.querySelector<HTMLImageElement>(".cm-live-link-favicon")?.src).toBe("https://example.com/favicon.ico");
     link.querySelector<HTMLImageElement>(".cm-live-link-favicon")?.dispatchEvent(new Event("error"));
@@ -181,14 +221,14 @@ describe("Markdown live preview", () => {
 
     const unsafe = createView("[bad](javascript:alert(1))");
     expect(unsafe.dom.querySelector(".cm-live-link")).toBeNull();
-    expect(unsafe.contentDOM.textContent).toContain("javascript:");
+    expect(visibleText(unsafe)).toContain("javascript:");
   });
 
   it("keeps a link preview visible while the caret remains at its end", () => {
     const view = createView("[站点](bilibili.com)", "[站点](bilibili.com)".length);
     view.focus();
 
-    expect(view.contentDOM.textContent).toBe("站点");
+    expect(visibleText(view)).toBe("站点");
     expect(view.dom.querySelector(".cm-live-link")?.getAttribute("title")).toBe("https://bilibili.com/");
   });
 
@@ -323,27 +363,84 @@ describe("Markdown live preview", () => {
     expect(useNotebookStore.getState().activeRootId).toBe(target.id);
   });
 
-  it("renders registered image and file attachments without exposing their Markdown", () => {
+  it("renders registered attachments with native previews and safe fallbacks", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<script>not executed</script>\nconst answer = 42;", { status: 200 }),
+    );
     const state = useNotebookStore.getState();
     useNotebookStore.setState({
       attachments: {
         ...state.attachments,
         image: { id: "image", nodeId: "root", name: "preview.png", mime: "image/png", size: 1, sha256: "hash", localPath: "blob:preview", remotePath: "remote", pinned: false, createdAt: 1 },
-        file: { id: "file", nodeId: "root", name: "notes.pdf", mime: "application/pdf", size: 1, sha256: "hash", localPath: "blob:file", remotePath: "remote", pinned: false, createdAt: 1 },
+        audio: { id: "audio", nodeId: "root", name: "voice.mp3", mime: "audio/mpeg", size: 1, sha256: "hash", localPath: "blob:audio", remotePath: "remote", pinned: false, createdAt: 1 },
+        video: { id: "video", nodeId: "root", name: "clip.mp4", mime: "video/mp4", size: 1, sha256: "hash", localPath: "blob:video", remotePath: "remote", pinned: false, createdAt: 1 },
+        pdf: { id: "pdf", nodeId: "root", name: "manual.pdf", mime: "application/pdf", size: 1, sha256: "hash", localPath: "blob:pdf", remotePath: "remote", pinned: false, createdAt: 1 },
+        text: { id: "text", nodeId: "root", name: "source.ts", mime: "text/plain", size: 64, sha256: "hash", localPath: "blob:text", remotePath: "remote", pinned: false, createdAt: 1 },
+        large: { id: "large", nodeId: "root", name: "large.log", mime: "text/plain", size: 600 * 1024, sha256: "hash", localPath: "blob:large", remotePath: "remote", pinned: false, createdAt: 1 },
+        file: { id: "file", nodeId: "root", name: "archive.zip", mime: "application/zip", size: 1, sha256: "hash", localPath: "blob:file", remotePath: "remote", pinned: false, createdAt: 1 },
       },
     });
 
     const image = createView("![Preview](attachment://image)");
-    expect(image.contentDOM.textContent).toBe("Preview");
-    expect(image.dom.querySelector<HTMLImageElement>(".cm-live-image-preview img")?.src).toBe("blob:preview");
+    expect(image.dom.querySelector(".cm-live-attachment-preview-label")?.textContent).toBe("preview.png");
+    expect(image.dom.querySelector(".cm-live-attachment-preview-size")?.textContent).toBe("1 B");
+    expect(image.dom.querySelector<HTMLImageElement>(".cm-live-image-attachment-preview img")?.src).toBe("blob:preview");
+
+    const audio = createView("[voice](attachment://audio)");
+    expect(audio.dom.querySelector<HTMLAudioElement>(".cm-live-audio-preview audio")?.src).toBe("blob:audio");
+    expect(audio.dom.querySelector(".cm-live-audio-preview [data-attachment-control]")).toBeNull();
+    expect(audio.dom.querySelector(".cm-live-audio-preview")?.getAttribute("data-attachment-control")).toBe("true");
+    expect(audio.dom.querySelector(".cm-live-attachment-preview-size")?.textContent).toBe("1 B");
+    expect(audio.dom.querySelector(".cm-live-attachment-preview-icon svg")).not.toBeNull();
+
+    const video = createView("[clip](attachment://video)");
+    expect(video.dom.querySelector<HTMLVideoElement>(".cm-live-video-preview video")?.src).toBe("blob:video");
+
+    const pdf = createView("[manual](attachment://pdf)");
+    expect(pdf.dom.querySelector<HTMLIFrameElement>(".cm-live-pdf-preview iframe")?.src).toBe("blob:pdf");
+    expect(pdf.dom.querySelector(".cm-live-attachment-preview-open")?.textContent).toBe("打开");
+
+    const text = createView("[source](attachment://text)");
+    await vi.waitFor(() => expect(text.dom.querySelector(".cm-live-text-preview pre")?.textContent)
+      .toBe("<script>not executed</script>\nconst answer = 42;"));
+    expect(text.dom.querySelector(".cm-live-text-preview script")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("blob:text", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+
+    const large = createView("[large](attachment://large)");
+    expect(large.dom.querySelector(".cm-live-text-preview pre")?.textContent).toContain("超过 512 KiB");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const file = createView("[download](attachment://file)");
-    expect(file.contentDOM.textContent).toBe("notes.pdf");
+    expect(visibleText(file)).toBe("archive.zip");
     expect(file.dom.querySelector(".cm-live-attachment")).not.toBeNull();
 
     const unsafe = createView("![bad](javascript:alert(1))");
     expect(unsafe.dom.querySelector(".cm-live-image-preview")).toBeNull();
-    expect(unsafe.contentDOM.textContent).toContain("javascript:");
+    expect(visibleText(unsafe)).toContain("javascript:");
+  });
+
+  it("collapses an attachment body and remembers the state only for the same node", () => {
+    useNotebookStore.setState({
+      attachments: {
+        audio: { id: "audio", nodeId: "root", name: "voice.mp3", mime: "audio/mpeg", size: 2048, sha256: "hash", localPath: "blob:audio", remotePath: "remote", pinned: false, createdAt: 1 },
+      },
+    });
+
+    const first = createView("[voice](attachment://audio)", 0, "", "node-a");
+    const toggle = first.dom.querySelector<HTMLButtonElement>(".cm-live-attachment-preview-toggle")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(first.dom.querySelector("audio")).not.toBeNull();
+
+    toggle.click();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(first.dom.querySelector("audio")).toBeNull();
+
+    const sameNode = createView("[voice](attachment://audio)", 0, "", "node-a");
+    expect(sameNode.dom.querySelector("audio")).toBeNull();
+    expect(sameNode.dom.querySelector(".cm-live-attachment-preview-toggle")?.getAttribute("aria-expanded")).toBe("false");
+
+    const otherNode = createView("[voice](attachment://audio)", 0, "", "node-b");
+    expect(otherNode.dom.querySelector("audio")).not.toBeNull();
   });
 
   it("keeps horizontal-rule source cursor-addressable without an atomic or replacement range", () => {
@@ -355,7 +452,7 @@ describe("Markdown live preview", () => {
     view.focus();
     view.dispatch({ selection: { anchor: 1 } });
 
-    expect(view.contentDOM.textContent).toBe("---");
+    expect(visibleText(view)).toBe("---");
     expect(view.dom.querySelector(".cm-live-horizontal-rule")).toBeNull();
     expect(view.moveByChar(view.state.selection.main, true).head).toBe(2);
   });

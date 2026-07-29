@@ -1,7 +1,7 @@
 import { memo, type CSSProperties, type RefCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronRight, Circle, Paperclip } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle } from "lucide-react";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP, type TreeLayoutGap } from "../shared/treeLayout";
 import { GhostEditor } from "./GhostEditor";
@@ -67,7 +67,6 @@ function TreeBlockFrame({
   const collapsed = useNotebookStore((state) => block.kind === "node" ? state.collapsed[block.node.id] : undefined);
   const toggleNode = useNotebookStore((state) => state.toggleNode);
   const enterNode = useNotebookStore((state) => state.enterNode);
-  const addAttachment = useNotebookStore((state) => state.addAttachment);
   const node = block.kind === "node" ? block.node : null;
   const hasChildren = block.kind === "node" && block.hasChildren;
   const isExpanded = node ? collapsed === false || (collapsed === undefined && hasChildren) : false;
@@ -152,21 +151,6 @@ function TreeBlockFrame({
             : <div className="date-content">{node.dateKey}</div>
           : <GhostEditor parentId={block.parentId} />}
       </div>
-
-      {node?.kind === "content" && !readOnly && (
-        <label className="row-attachment" aria-label="添加附件">
-          <Paperclip size={14} />
-          <input
-            type="file"
-            accept="image/*,.pdf,.txt,.md,.doc,.docx,.zip"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void addAttachment(node.id, file);
-              event.currentTarget.value = "";
-            }}
-          />
-        </label>
-      )}
     </div>
   );
 }

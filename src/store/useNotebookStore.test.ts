@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useNotebookStore } from "./useNotebookStore";
 import { childrenOf } from "../domain/tree";
+
+const attachmentPlatformMocks = vi.hoisted(() => ({
+  storeAttachment: vi.fn(),
+  deleteStoredAttachments: vi.fn(),
+}));
+
+vi.mock("../platform/attachments", () => attachmentPlatformMocks);
 
 function firstContentNode() {
   const state = useNotebookStore.getState();
@@ -10,6 +17,16 @@ function firstContentNode() {
 beforeEach(() => {
   localStorage.clear();
   useNotebookStore.setState(useNotebookStore.getInitialState(), true);
+  attachmentPlatformMocks.storeAttachment.mockReset();
+  attachmentPlatformMocks.storeAttachment.mockResolvedValue({
+    name: "notes.txt",
+    mime: "text/plain",
+    size: 3,
+    sha256: "hash-notes",
+    localPath: "C:\\app\\attachments\\stored",
+  });
+  attachmentPlatformMocks.deleteStoredAttachments.mockReset();
+  attachmentPlatformMocks.deleteStoredAttachments.mockResolvedValue(0);
 });
 
 describe("splitNode (Enter in the middle of content)", () => {
@@ -85,6 +102,22 @@ describe("splitNode (Enter in the middle of content)", () => {
     expect(childrenOf(state, node.parentId!).map((child) => child.id)).toEqual([newId, node.id]);
     expect(state.activeNodeId).toBe(newId);
   });
+
+  it("creates the next blank sibling below an empty node", () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "");
+
+    const newId = store.splitNode(node.id, "", "")!;
+    const state = useNotebookStore.getState();
+
+    expect(state.nodes[node.id].markdown).toBe("");
+    expect(state.nodes[newId].markdown).toBe("");
+    expect(state.nodes[newId].parentId).toBe(node.parentId);
+    expect(childrenOf(state, node.parentId!).map((child) => child.id)).toEqual([node.id, newId]);
+    expect(state.activeNodeId).toBe(newId);
+    expect(state.activeNodeCursor).toBe(0);
+  });
 });
 
 describe("editing a content node as the active root", () => {
@@ -158,6 +191,20 @@ describe("editing a content node as the active root", () => {
     const state = useNotebookStore.getState();
     expect(state.activeRootId).toBe(previous.id);
     expect(state.activeNodeId).toBe(previous.id);
+  });
+
+  it("does not outdent a direct child beyond the active page root", () => {
+    const store = useNotebookStore.getState();
+    const page = firstContentNode();
+    store.enterNode(page.id);
+    const childId = store.createChild(page.id, "child")!;
+    const operationsBefore = useNotebookStore.getState().pendingOperations.length;
+
+    useNotebookStore.getState().outdent(childId);
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[childId].parentId).toBe(page.id);
+    expect(state.pendingOperations).toHaveLength(operationsBefore);
   });
 });
 
@@ -327,5 +374,23 @@ describe("explicit row deletion", () => {
     const state = useNotebookStore.getState();
     expect(state.activeNodeId).toBeNull();
     expect(state.activeGhostParentId).toBe(dateId);
+  });
+});
+
+describe("attachment storage", () => {
+  it("stores an attachment record without changing node Markdown", async () => {
+    const store = useNotebookStore.getState();
+    const node = firstContentNode();
+    store.editMarkdown(node.id, "keep markdown");
+    const attachment = await store.addAttachment(node.id, { path: "C:\\source\\notes.txt" });
+
+    const state = useNotebookStore.getState();
+    expect(state.nodes[node.id].markdown).toBe("keep markdown");
+    expect(state.attachments[attachment.id]).toEqual(attachment);
+    expect(attachment).toMatchObject({ nodeId: node.id, name: "notes.txt", mime: "text/plain", size: 3 });
+    expect(attachmentPlatformMocks.storeAttachment).toHaveBeenCalledWith(
+      { path: "C:\\source\\notes.txt" },
+      attachment.id,
+    );
   });
 });

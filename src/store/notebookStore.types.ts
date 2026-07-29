@@ -1,5 +1,6 @@
 import type { EmptyNodeTarget } from "../domain/emptyDrop";
-import type { FieldType, NotebookState, Operation } from "../domain/model";
+import type { AttachmentRecord, FieldType, NotebookState, Operation } from "../domain/model";
+import type { AttachmentPathSource } from "../platform/attachments";
 
 export interface NotebookStore extends NotebookState {
   activeRootId: string;
@@ -43,6 +44,6 @@ export interface NotebookStore extends NotebookState {
   maintainStorage: () => Promise<number>;
   addField: (nodeId: string, key: string, type: FieldType, value: string) => void;
   updateField: (fieldId: string, value: string) => void;
-  addAttachment: (nodeId: string, file: File) => Promise<void>;
+  addAttachment: (nodeId: string, source: AttachmentPathSource) => Promise<AttachmentRecord>;
   hydrate: () => Promise<void>;
 }

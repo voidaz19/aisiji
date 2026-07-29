@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { executeDeleteNode, executeDeleteSelection } from "./deleteNode";
 import { executeMergeNode } from "./mergeNode";
-import { executeMoveNode } from "./moveNode";
+import { canExecuteDraftMove, executeMoveNode } from "./moveNode";
 import { executeSplitNode } from "./splitNode";
 import { createEmptyState, ROOT_ID, type NotebookState } from "../model";
 import { childrenOf, createNode } from "../tree";
@@ -170,7 +170,7 @@ describe("node domain commands", () => {
     expect(result.changed).toBe(true);
     expect(result.state.nodes.second.parentId).toBe("first");
 
-    result = executeMoveNode(result.state, { type: "outdent", nodeId: "second", now: 11 });
+    result = executeMoveNode(result.state, { type: "outdent", nodeId: "second", boundaryRootId: ROOT_ID, now: 11 });
     expect(result.changed).toBe(true);
     expect(result.state.nodes.second.parentId).toBe(ROOT_ID);
 
@@ -178,6 +178,40 @@ describe("node domain commands", () => {
     expect(result.changed).toBe(false);
     expect(result.state.nodes.first.parentId).toBe(ROOT_ID);
     expect(result.state.nodes.descendant.parentId).toBe("first");
+  });
+
+  it("rejects outdenting a direct child beyond the current page root", () => {
+    let state = addNode(createEmptyState(), "page", ROOT_ID, "page");
+    state = addNode(state, "child", "page", "child");
+
+    const result = executeMoveNode(state, {
+      type: "outdent",
+      nodeId: "child",
+      boundaryRootId: "page",
+      now: 10,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.state).toBe(state);
+    expect(result.state.nodes.child.parentId).toBe("page");
+  });
+
+  it("previews draft moves through the same structural rules", () => {
+    let state = addNode(createEmptyState(), "previous", ROOT_ID, "previous");
+    expect(canExecuteDraftMove(state, { type: "indent", parentId: ROOT_ID })).toBe(true);
+
+    state = addNode(state, "page", ROOT_ID, "page");
+    expect(canExecuteDraftMove(state, {
+      type: "outdent",
+      parentId: "page",
+      boundaryRootId: "page",
+    })).toBe(false);
+    expect(canExecuteDraftMove(state, {
+      type: "outdent",
+      parentId: "page",
+      boundaryRootId: ROOT_ID,
+    })).toBe(true);
+    expect(Object.keys(state.nodes)).not.toContain("__draft_move_candidate__");
   });
 
   it("moves a complete subtree to an explicit vertical insertion slot", () => {

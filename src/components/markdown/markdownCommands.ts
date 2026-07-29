@@ -58,3 +58,37 @@ export const toggleItalic = toggleMarkdownMark("*");
 export const toggleStrikethrough = toggleMarkdownMark("~~");
 export const toggleHighlight = toggleMarkdownMark("==");
 export const toggleInlineCode = toggleMarkdownMark("`");
+
+function toggleBlockPrefix(prefix: string, pattern: RegExp): StateCommand {
+  return ({ state, dispatch }) => {
+    const current = state.doc.toString();
+    const match = current.match(pattern);
+    const removedLength = match?.[0].length ?? 0;
+    const addedLength = match ? 0 : prefix.length;
+    const changes = match
+      ? { from: 0, to: removedLength, insert: "" }
+      : { from: 0, insert: prefix };
+    const mapPosition = (position: number) => match
+      ? Math.max(0, position - removedLength)
+      : position + addedLength;
+    const selection = EditorSelection.create(state.selection.ranges.map((range) =>
+      EditorSelection.range(mapPosition(range.anchor), mapPosition(range.head))));
+    dispatch(state.update({ changes, selection, scrollIntoView: true, userEvent: "input" }));
+    return true;
+  };
+}
+
+export const toggleHeading = toggleBlockPrefix("# ", /^#{1,6}\s+/);
+export const toggleQuote = toggleBlockPrefix("> ", /^>\s+/);
+export const toggleTask = toggleBlockPrefix("[ ] ", /^\[[ xX]\]\s+/);
+
+export function insertMarkdownText(text: string): StateCommand {
+  return ({ state, dispatch }) => {
+    const transaction = state.changeByRange((range) => ({
+      changes: { from: range.from, to: range.to, insert: text },
+      range: EditorSelection.cursor(range.from + text.length),
+    }));
+    dispatch(state.update(transaction, { scrollIntoView: true, userEvent: "input" }));
+    return true;
+  };
+}

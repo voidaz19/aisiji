@@ -13,7 +13,10 @@ afterEach(() => cleanup());
 describe("AppShell notebook lifecycle", () => {
   it("keeps notebook editors mounted while visiting the home page", async () => {
     const { container, getAllByRole } = render(<AppShell />);
-    await waitFor(() => expect(container.querySelector(".tree-list")).not.toBeNull());
+    await waitFor(
+      () => expect(container.querySelector(".tree-list")).not.toBeNull(),
+      { timeout: 3_000 },
+    );
 
     fireEvent.click(getAllByRole("button", { name: "今天" })[0]);
     await waitFor(() => expect(container.querySelector("[data-node-id] .inline-editor")).not.toBeNull());
@@ -38,5 +41,22 @@ describe("AppShell notebook lifecycle", () => {
     );
     expect(enteredHeading).not.toBeNull();
     expect(enteredHeading?.querySelector(".cm-editor")).not.toBeNull();
+  });
+
+  it("moves backward and forward through page navigation changes", async () => {
+    const { container, getAllByRole, getByRole } = render(<AppShell />);
+
+    fireEvent.click(getAllByRole("button", { name: "所有笔记" })[0]);
+    await waitFor(() => expect(container.querySelector(".breadcrumb-current")?.textContent).toBe("所有笔记"));
+
+    fireEvent.click(getAllByRole("button", { name: "设置" })[0]);
+    await waitFor(() => expect(container.querySelector(".breadcrumb-current")?.textContent).toBe("设置"));
+
+    fireEvent.click(getByRole("button", { name: "后退" }));
+    await waitFor(() => expect(container.querySelector(".breadcrumb-current")?.textContent).toBe("所有笔记"));
+    expect((getByRole("button", { name: "前进" }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.keyDown(window, { key: "ArrowRight", altKey: true });
+    await waitFor(() => expect(container.querySelector(".breadcrumb-current")?.textContent).toBe("设置"));
   });
 });
