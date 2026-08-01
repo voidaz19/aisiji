@@ -1073,3 +1073,83 @@
 
 - 定向 `NotebookPanel` 测试通过：1 个测试文件/37 条测试。
 - 完整 `npm run check`：通过（模块边界、31 个测试文件/225 条测试、生产构建、Rust 格式和 Rust 编译）；Vite 仅提示既有的编辑器 chunk 超过 500 kB 警告。
+
+## 2026-08-01：自动化性能基线与回归预算
+
+### 用户确认与范围
+
+- 用户确认性能判断不能依赖人工主观测试，并确认先建立纯逻辑、真实浏览器交互和后续 Tauri 原生三层性能体系。
+- 本轮落地前两层，保持同步与移动端不进入施工范围；Tauri WebView2、SQLite 和附件链路明确列为后续独立层，不用 Chromium 数据替代。
+- 施工前确认工作区已有未提交的编辑、拖拽、菜单和文档成果；本轮未覆盖、回退或重排这些改动。
+
+### 实现
+
+- 新增 `performance/fixtures.ts`，确定性生成 1k/10k 大纲、1k 可展开子树和 100KB Markdown；测试只写隔离浏览器上下文的 `localStorage`，不读取真实工作区。
+- 新增 `performance/domain.perf.test.ts` 与 `vitest.performance.config.ts`：预热后重复采样并以 P95 检查可见树、搜索和布局行纯逻辑预算。
+- 新增 `performance/browser.perf.spec.ts` 与 `playwright.performance.config.ts`：针对生产构建自动执行启动、打开 10k 大纲、展开 1k 子节点、长 Markdown 连续输入、重复节点切换和真实指针拖拽。
+- 浏览器采集操作提交耗时、Long Task 总时长、超过 34ms 的慢帧比例、实际 DOM 行数和垃圾回收后的 JS 堆增长；失败时保留 Playwright trace。
+- 新增 `performance/budgets.ts` 统一管理预算，支持以 `PERF_BUDGET_SCALE` 记录固定 CI 硬件差异；新增 `performance/metrics.ts` 输出包含环境、阈值和通过状态的版本化 JSON。
+- `package.json` 新增 `test:perf`、分层性能命令与专用预览服务；新增 `tsconfig.performance.json`，并把 `check:perf-types` 纳入常规 `npm run check`，避免独立性能源码逃过类型检查。
+- `.gitignore` 忽略 `performance-results/` 本机产物；新增 `docs/PERFORMANCE.md` 并更新 `docs/PROJECT_INDEX.md` 的 SPEC、实现和验证入口。
+- README 暂不更新，按项目约定等待用户确认本轮性能测试有效无误后再更新。
+
+### 首轮基线
+
+- 纯逻辑 P95：1k 可见树约 0.77ms、10k 可见树约 10.08ms、10k 搜索约 3.52ms、1k 布局行约 0.36ms。
+- Chromium：应用就绪约 1.23s、打开 10k 大纲约 380ms/长任务 98ms、展开 1k 子节点约 425ms/慢帧率 6.3%，实际仅挂载 37 行。
+- UTF-8 100KB Markdown 输入 P95 约 115ms，是当前最值得优先跟踪的性能指标；本轮 15 次输入未产生超过 50ms 的 Long Task。
+- 12 次节点切换 P95 约 246ms，垃圾回收后 JS 堆增长约 1.29MiB；指针拖拽完成约 552ms，450ms 观测窗内未记录超过 34ms 的慢帧。
+- 初始预算依据本机基线保留抖动余量后收紧；不同固定硬件必须记录缩放系数，不能通过临时放宽单项断言隐藏回退。
+
+### 验证
+
+- `npm run test:perf`：通过性能源码类型检查、1 个文件/4 条纯逻辑性能测试和 5 条真实 Chromium 场景，并生成 `performance-results/domain.json` 与 `performance-results/browser.json`。
+- 完整 `npm run check`：通过模块边界、性能源码类型检查、39 个测试文件/317 条前端测试、生产构建、Rust 格式和 Rust 编译。
+- Vite 仅提示既有的 editor chunk 超过 500 kB；`git diff --check` 无空白错误。
+
+### 组合压力与持久化归因
+
+- 用户确认先补组合压力测试和性能归因，不在本轮改动持久化时序或数据安全语义。
+- `performance/fixtures.ts` 新增 10k 节点与 UTF-8 100KB Markdown 的组合工作区；浏览器场景在该文档中连续输入 100 次。
+- 页面测试句柄在夹具写入后代理 `JSON.stringify` 与目标工作区的 `localStorage.setItem`，分别记录每次输入的全量序列化和同步存储耗时；同时输出输入 P95、Long Task 总时长和持久化占比。
+- 组合指标纳入统一预算和机器可读 `browser.json`；结构性 DOM 预算继续不受硬件缩放系数影响。
+- 约 2.38MB 的组合工作区首次归因显示输入 P95 约 123ms，其中全量 JSON 序列化 P95 约 10.4ms、同步 `localStorage` 写入 P95 约 11ms，二者约占输入 P95 的 21.7%。
+- 重复运行输入 P95 约 127.9～138.3ms，同步持久化 P95 约 25.1～28.4ms；100 次输入对应 100 次全量序列化和 100 次同步写入，持久化约占输入 P95 的 21.5%。
+- 三次组合采样中 Long Task 数明显波动，已记录的两次完整计数为 48～78/100，单次 Long Task P95 均约 59ms，持续未通过“最多 30 个 Long Task”的暂定门槛。
+- 该失败保留为真实性能问题，不通过放宽预算伪造成功；下一步需要用户确认是否实施有界持久化批处理及强制落盘策略。
+- README 暂不更新，等待用户确认本轮归因结果后按项目约定处理。
+
+## 2026-08-01：经典增量持久化架构设计
+
+### 用户确认与审计
+
+- 用户确认不采用 `localStorage` 恢复日志或延迟全量快照等过渡方案，直接设计 SQLite/IndexedDB 按实体增量持久化与操作日志的经典结构。
+- 当前 SQLite 只有单行 `workspace_state.state_json`、操作日志和附件元数据表；每次 Tauri 命令重新打开数据库，未显式启用 WAL 或复用连接。
+- 浏览器工作区只有单个 localStorage JSON；Tauri 启动时通过浏览器与原生快照时间戳竞争选取数据。
+- 领域命令目前主要返回完整新状态，部分移动结果只报告移动根节点，Repository 若直接接入只能扫描 10k 实体猜差异，因此精确变更集是经典增量方案的必要前置。
+- 当前每个按键立即创建包含完整 Markdown 的 `update_markdown` 操作；仅改状态表而不合并未落盘操作仍会产生大量 IPC 与日志数据。
+
+### SPEC 设计
+
+- 新增 `docs/PERSISTENCE_SPEC.md`，定义领域 `NotebookChangeSet`、Store 耐久级别、200ms/1000ms 内容提交窗口、同节点 Markdown 操作合并和 immediate 结构事务。
+- SQLite v2 采用 nodes、node_fields、attachments、node_view_state、recent_page_edits、operations 和 workspace_meta 实体表；启用 WAL、外键、NORMAL synchronous、busy timeout 和复用连接。
+- Tauri 通过单个增量 mutation 命令原子提交状态实体与操作日志；浏览器 IndexedDB 使用对应对象仓库和同一 Repository 合同。
+- 迁移从旧 SQLite/localStorage 快照中选择最新合法版本，一次事务导入 v2；迁移成功后不双写旧格式，只读保留旧快照一个稳定版本。
+- 明确附件文件/数据库两阶段处理、失败队列、操作压缩边界、实施顺序、合同测试、迁移测试与组合性能完成标准。
+- `docs/ARCHITECTURE.md`、`docs/PROJECT_INDEX.md` 和 `docs/PERFORMANCE.md` 已同步目标边界与当前已知红线。
+- README 暂不更新；本轮仅冻结架构，不宣称增量持久化已经实现。
+
+### 客户端数据库选型确认
+
+- 用户询问 PostgreSQL 是否更适合当前 App。结论是当前瓶颈来自全量快照写入，而非 SQLite 引擎；替换为独立数据库服务不能解决全量序列化，并会增加安装、进程、端口、鉴权和未来移动端复杂度。
+- 用户确认客户端继续采用 SQLite/IndexedDB：Tauri 本地状态使用 SQLite，浏览器预览使用 IndexedDB；PostgreSQL 只保留为未来自建同步服务器的候选存储，不允许客户端直连。
+
+### 放弃开发期旧数据兼容
+
+- 用户明确当前没有任何需要保留的有效数据，因此取消旧 SQLite/localStorage 快照选择、解析、导入、只读保留和降级支持。
+- SPEC 改为目标 schema 不匹配时限定范围重建：Tauri 删除明确的 notebook SQLite 主文件及 WAL/SHM，浏览器删除旧工作区键和非目标 IndexedDB，再用领域 seed 初始化。
+- 重建不得删除设备 ID、凭据和其他设置；附件目录不随数据库文件直接递归删除，孤儿附件由维护任务按明确目标处理。
+- 用户进一步确认本轮“完全不用考虑旧数据兼容”：旧格式不再被视为实现输入，不读取内容、不迁移、不双写、不提供降级；仅对明确的工作区存储目标执行开发期 schema 重建。
+- `AGENTS.md`、`docs/PERSISTENCE_SPEC.md` 与 `docs/ARCHITECTURE.md` 已统一此规则，避免后续实现重新引入兼容分支；正式发布后的升级策略不属于本轮 SPEC，届时另行设计。
+- `docs/PROJECT_INDEX.md` 已同步“不读取旧数据”的 SPEC 定位；文档施工后 `git diff --check` 通过，历史日志中的旧迁移提案作为被后续决策推翻的过程记录保留，不代表当前方案。
+- 架构实施前按用户要求建立干净 Git 基线；提交前 `npm run check` 通过模块边界、性能源码类型、39 个测试文件/317 条测试、生产构建、Rust 格式和 Rust 编译，仍只有既有 editor chunk 体积提示。

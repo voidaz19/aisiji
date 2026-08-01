@@ -33,6 +33,8 @@ src-tauri/src/
 | `docs/SYNC_PROTOCOL.md` | 操作日志和同步协议 | 同步格式或合并规则变化时 |
 | `docs/编辑规范.md` | 编辑器交互约定 | 输入、快捷键或 Markdown 行为变化时 |
 | `docs/MARKDOWN_SPEC.md` | Markdown 支持边界、Live Preview 与格式快捷键 | Markdown 语法或渲染行为变化时 |
+| `docs/PERFORMANCE.md` | 性能夹具、采样规则、回归预算、结果格式与平台覆盖边界 | 性能场景、指标、预算或执行环境变化时 |
+| `docs/PERSISTENCE_SPEC.md` | SQLite/IndexedDB 增量实体、事务、操作合并，以及不读取旧数据的开发期 schema 重建边界 | 持久化模型、Repository 契约或数据初始化策略变化前 |
 | `docs/DEVELOPMENT_LOG.md` | 每轮施工范围、决策与验证结果 | 每次修改代码或项目文档时 |
 | `README.md` | 面向使用者的项目能力和运行说明 | 用户确认本轮工作有效后 |
 
@@ -63,6 +65,8 @@ src-tauri/src/
 | 树块空白坐标命中 | src/components/treeHitTesting.ts | src/components/treeHitTesting.test.ts |
 | 页面级连续可编辑画布落点 | src/features/notebook/NotebookPanel.tsx、src/App.css | src/features/notebook/NotebookPanel.test.tsx |
 | 大列表窗口化和交互兼容 | src/features/notebook/NotebookPanel.tsx | src/features/notebook/NotebookPanel.test.tsx |
+| 自动化性能基线与回归预算 | performance/fixtures.ts、performance/budgets.ts、performance/metrics.ts、playwright.performance.config.ts、vitest.performance.config.ts | performance/domain.perf.test.ts、performance/browser.perf.spec.ts、docs/PERFORMANCE.md、`npm run test:perf` |
+| 增量持久化目标架构 | docs/PERSISTENCE_SPEC.md、docs/ARCHITECTURE.md | 实施前冻结待确认决策；实施后由 Repository 合同、schema 重建与性能测试接替 |
 | 节点与视图根层级线 | src/features/notebook/hooks/useHierarchyGuides.ts | src/features/notebook/NotebookPanel.test.tsx、src/features/notebook/model/hierarchyGuideLayout.test.ts |
 
 ## 验证入口
@@ -70,6 +74,8 @@ src-tauri/src/
 - 完整检查：`npm run check`
 - 模块边界：`npm run check:boundaries`
 - 前端测试：`npm test`
+- 性能测试类型检查：`npm run check:perf-types`
+- 完整性能回归：`npm run test:perf`
 - 生产构建：`npm run build`
 - Rust 格式：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
 - Rust 编译：`cargo check --manifest-path src-tauri/Cargo.toml`

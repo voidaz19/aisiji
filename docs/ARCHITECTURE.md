@@ -35,12 +35,22 @@ platform -> domain（仅类型）
 - 拖拽的语义插槽放在 `domain/dropSlots.ts`；DOM 测量和插入线布局留在笔记功能模块，横向坐标不得进入领域规则。
 - 模块之间优先通过明确的 props、类型和接口连接，避免新增隐式全局状态。
 
+## 增量持久化目标架构
+
+工作区持久化的目标结构见 [增量持久化 SPEC](PERSISTENCE_SPEC.md)。实施完成后：
+
+- 领域命令返回新状态与精确实体变更集，不由 Repository 扫描完整状态推断差异。
+- Store 负责耐久级别和操作语义，持久化协调器负责按实体键合并未落盘变化。
+- `platform` 暴露统一 `WorkspaceRepository`；Tauri 使用 SQLite，浏览器预览使用 IndexedDB。
+- 当前状态实体与操作日志在同一事务中提交；完整 JSON 只用于导入导出和备份，不用于日常保存或旧数据迁移。
+- Tauri/SQLite 与 Browser/IndexedDB 适配器禁止被 `domain`、React 组件或具体 feature 直接依赖。
+
 ## Rust 目录
 
 ```text
 src-tauri/src/
   lib.rs          Tauri 启动与命令注册
-  database.rs     SQLite 工作区和操作日志
+  database.rs     SQLite 增量工作区、事务和操作日志
   attachments.rs  附件文件与哈希
   credentials.rs  系统密钥环
   webdav.rs       WebDAV 网络传输

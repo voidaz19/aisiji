@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vitest/globals"]
+  },
+  "include": [
+    "performance/**/*.ts",
+    "playwright.performance.config.ts",
+    "vitest.performance.config.ts"
+  ],
+  "references": []
+}
