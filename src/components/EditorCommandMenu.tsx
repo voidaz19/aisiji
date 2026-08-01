@@ -43,6 +43,7 @@ export interface FileInsertStatus {
 
 interface Props {
   getEditor: () => EditorView | undefined;
+  onOpenChange?: (open: boolean) => void;
   onPickFiles?: () => Promise<FileInsertOutcome>;
   onRetryFiles?: () => Promise<FileInsertOutcome>;
   fileStatus?: FileInsertStatus;
@@ -125,6 +126,7 @@ export function calculateCommandMenuPosition(
 
 export function EditorCommandMenu({
   getEditor,
+  onOpenChange,
   onPickFiles,
   onRetryFiles,
   fileStatus = { kind: "idle", message: "" },
@@ -162,7 +164,8 @@ export function EditorCommandMenu({
     setPosition(null);
     setQuery("");
     setSelectedId(null);
-  }, []);
+    onOpenChange?.(false);
+  }, [onOpenChange]);
 
   const openAtAnchor = useCallback((nextAnchor: CommandMenuAnchor) => {
     focusSearchWhenPositioned.current = true;
@@ -170,7 +173,8 @@ export function EditorCommandMenu({
     setQuery("");
     setSelectedId(commands[0]?.id ?? FILE_ITEM_ID);
     setAnchor(nextAnchor);
-  }, []);
+    onOpenChange?.(true);
+  }, [onOpenChange]);
 
   const openAtCaret = useCallback(() => {
     const editor = getEditorRef.current();

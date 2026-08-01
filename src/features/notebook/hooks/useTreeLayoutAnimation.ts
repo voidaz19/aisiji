@@ -104,12 +104,36 @@ export function useTreeLayoutAnimation(
           if (animations.current.get(id) !== animation) return;
           animations.current.delete(id);
           animation.cancel();
+          if (animations.current.size === 0) previousRows.current = measureRows(container).currentRows;
         }).catch(() => undefined);
       });
     }
 
     previousRows.current = currentRows;
   // The caller owns the semantic dependencies that represent tree layout changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef, ...dependencies]);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    let frame: number | null = null;
+    const captureStableSize = () => {
+      if (animations.current.size > 0) return;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        if (animations.current.size === 0) previousRows.current = measureRows(container).currentRows;
+      });
+    };
+    const observer = new ResizeObserver(captureStableSize);
+    observer.observe(container);
+    container.querySelectorAll<HTMLElement>("[data-tree-block-key]").forEach((row) => observer.observe(row));
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  // Re-observe whenever the rendered row set or active root changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [containerRef, ...dependencies]);
 

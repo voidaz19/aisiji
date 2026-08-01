@@ -15,6 +15,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   Reflect.deleteProperty(HTMLElement.prototype, "animate");
 });
 
@@ -40,6 +41,19 @@ function ReactiveOutline() {
       activeRoot={null}
       rootId={ROOT_ID}
       visibleNodes={visibleNodesForView({ nodes, collapsed }, "outline", ROOT_ID, "")}
+    />
+  );
+}
+
+function ReactivePageOutline({ rootId }: { rootId: string }) {
+  const nodes = useNotebookStore((state) => state.nodes);
+  const collapsed = useNotebookStore((state) => state.collapsed);
+  return (
+    <NotebookPanel
+      view="outline"
+      activeRoot={nodes[rootId] ?? null}
+      rootId={rootId}
+      visibleNodes={visibleNodesForView({ nodes, collapsed }, "outline", rootId, "")}
     />
   );
 }
@@ -518,6 +532,12 @@ describe("NotebookPanel node range selection", () => {
     expect(ghostRow.classList.contains("layout-gap-subtree-end")).toBe(true);
     expect(container.querySelectorAll(".selection-subtree-box")).toHaveLength(1);
     expect(container.querySelectorAll(".selection-subtree-box > .selection-subtree-root")).toHaveLength(1);
+    expect(document.body.querySelector('[role="toolbar"][aria-label="节点选区菜单"]')).toBeNull();
+
+    fireEvent.pointerUp(area, { pointerId: 3, clientX: 20, clientY: 200 });
+
+    expect(document.body.querySelector('[role="toolbar"][aria-label="节点选区菜单"]')).not.toBeNull();
+    expect(document.body.querySelector('button[aria-label="删除节点"]')).not.toBeNull();
   });
 
   it("keeps the editor selection logically intact during node preview and clears it on commit", () => {
@@ -978,6 +998,214 @@ describe("NotebookPanel node range selection", () => {
 
     expect(useNotebookStore.getState().nodes[date.id].deletedAt).toBeNull();
     expect(useNotebookStore.getState().nodes[content.id].deletedAt).not.toBeNull();
+  });
+
+  it("indents a selected node range with Tab and keeps the moved subtrees selected", async () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const a = Object.values(initial.nodes).find((node) => node.parentId === date.id)!;
+    const bId = initial.createChild(date.id, "B")!;
+    const cId = useNotebookStore.getState().createChild(date.id, "C")!;
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const bRow = container.querySelector<HTMLElement>(`[data-selection-key="${bId}"]`)!;
+    const cRow = container.querySelector<HTMLElement>(`[data-selection-key="${cId}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    dragTo(cRow);
+
+    fireEvent.pointerDown(bRow.querySelector(".cm-content")!, { button: 0, pointerId: 7, clientX: 40, clientY: 20 });
+    fireEvent.pointerMove(area, { pointerId: 7, clientX: 20, clientY: 80 });
+    fireEvent.pointerUp(area, { pointerId: 7, clientX: 20, clientY: 80 });
+    fireEvent.keyDown(area, { key: "Tab", code: "Tab" });
+
+    await waitFor(() => {
+      const state = useNotebookStore.getState();
+      expect(state.nodes[bId].parentId).toBe(a.id);
+      expect(state.nodes[cId].parentId).toBe(a.id);
+      expect(container.querySelector(`[data-selection-key="${bId}"]`)?.classList.contains("is-node-selected")).toBe(true);
+      expect(container.querySelector(`[data-selection-key="${cId}"]`)?.classList.contains("is-node-selected")).toBe(true);
+    });
+  });
+
+  it("adds and removes non-contiguous nodes with Ctrl+click", () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const bId = initial.createChild(date.id, "B")!;
+    const cId = useNotebookStore.getState().createChild(date.id, "C")!;
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const rows = [bId, cId].map((id) => container.querySelector<HTMLElement>(`[data-selection-key="${id}"]`)!);
+
+    fireEvent.pointerDown(rows[0].querySelector(".cm-content")!, { button: 0, pointerId: 8, ctrlKey: true });
+    fireEvent.pointerDown(rows[1].querySelector(".cm-content")!, { button: 0, pointerId: 9, ctrlKey: true });
+
+    expect(rows[0].classList.contains("is-node-selected")).toBe(true);
+    expect(rows[1].classList.contains("is-node-selected")).toBe(true);
+
+    fireEvent.pointerDown(rows[0].querySelector(".cm-content")!, { button: 0, pointerId: 10, ctrlKey: true });
+
+    expect(rows[0].classList.contains("is-node-selected")).toBe(false);
+    expect(rows[1].classList.contains("is-node-selected")).toBe(true);
+  });
+
+  it("keeps the node selection while menu actions copy, indent, and delete", async () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const preceding = Object.values(initial.nodes).find((node) => node.parentId === date.id)!;
+    const selectedId = initial.createChild(date.id, "menu target")!;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText }, userAgent: navigator.userAgent });
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const row = container.querySelector<HTMLElement>(`[data-selection-key="${selectedId}"]`)!;
+
+    fireEvent.pointerDown(row.querySelector(".cm-content")!, { button: 0, pointerId: 14, ctrlKey: true });
+
+    const copyButton = document.body.querySelector<HTMLElement>('button[aria-label="复制节点"]')!;
+    fireEvent.pointerDown(copyButton, { button: 0, pointerId: 15 });
+    fireEvent.click(copyButton);
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("menu target"));
+    expect(row.classList.contains("is-node-selected")).toBe(true);
+    expect(document.body.querySelector('.selection-menu-feedback[role="status"]')?.textContent).toBe("已复制");
+
+    const indentButton = document.body.querySelector<HTMLElement>('button[aria-label="缩进节点"]')!;
+    fireEvent.pointerDown(indentButton, { button: 0, pointerId: 16 });
+    fireEvent.click(indentButton);
+
+    await waitFor(() => expect(useNotebookStore.getState().nodes[selectedId].parentId).toBe(preceding.id));
+
+    const deleteButton = document.body.querySelector<HTMLElement>('button[aria-label="删除节点"]')!;
+    fireEvent.pointerDown(deleteButton, { button: 0, pointerId: 17 });
+    fireEvent.click(deleteButton);
+
+    await waitFor(() => expect(useNotebookStore.getState().nodes[selectedId].deletedAt).not.toBeNull());
+  });
+
+  it("removes hierarchy actions when the selected node cannot change level", () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const firstChild = Object.values(initial.nodes).find((node) => node.parentId === date.id)!;
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const row = container.querySelector<HTMLElement>(`[data-selection-key="${firstChild.id}"]`)!;
+
+    fireEvent.pointerDown(row.querySelector(".cm-content")!, { button: 0, pointerId: 20, ctrlKey: true });
+
+    expect(document.body.querySelector('button[aria-label="缩进节点"]')).toBeNull();
+    expect(document.body.querySelector('button[aria-label="提升节点"]')).toBeNull();
+    expect(document.body.querySelector('.selection-menu-feedback[role="status"]')).toBeNull();
+  });
+
+  it("places outdent before indent when both hierarchy actions are available", () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const parentId = initial.createChild(date.id, "parent")!;
+    useNotebookStore.getState().createChild(parentId, "first child");
+    const selectedId = useNotebookStore.getState().createChild(parentId, "selected child")!;
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const row = container.querySelector<HTMLElement>(`[data-selection-key="${selectedId}"]`)!;
+
+    fireEvent.pointerDown(row.querySelector(".cm-content")!, { button: 0, pointerId: 22, ctrlKey: true });
+
+    const toolbar = document.body.querySelector('[role="toolbar"][aria-label="节点选区菜单"]')!;
+    expect(Array.from(toolbar.querySelectorAll("button"), (button) => button.getAttribute("aria-label"))).toEqual([
+      "复制节点",
+      "剪切节点",
+      "提升节点",
+      "缩进节点",
+      "删除节点",
+    ]);
+  });
+
+  it("keeps the node menu aligned with the selected object after indentation", async () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const preceding = Object.values(initial.nodes).find((node) => node.parentId === date.id)!;
+    const selectedId = initial.createChild(date.id, "moving menu target")!;
+    const motion = installTreeMotionMocks();
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    motion.flushFrame();
+    const row = container.querySelector<HTMLElement>(`[data-selection-key="${selectedId}"]`)!;
+
+    fireEvent.pointerDown(row.querySelector(".cm-content")!, { button: 0, pointerId: 21, ctrlKey: true });
+    await waitFor(() => expect(document.body.querySelector<HTMLElement>('[aria-label="节点选区菜单"]')?.style.left).toBe("40px"));
+
+    fireEvent.click(document.body.querySelector<HTMLButtonElement>('button[aria-label="缩进节点"]')!);
+    motion.flushFrame();
+
+    await waitFor(() => {
+      expect(useNotebookStore.getState().nodes[selectedId].parentId).toBe(preceding.id);
+      expect(document.body.querySelector<HTMLElement>('[aria-label="节点选区菜单"]')?.style.left).toBe("64px");
+    });
+    expect(document.body.querySelector('.selection-menu-feedback[role="status"]')).toBeNull();
+  });
+
+  it("cuts selected nodes only after copying their text", async () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const selectedId = initial.createChild(date.id, "cut target")!;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText }, userAgent: navigator.userAgent });
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const row = container.querySelector<HTMLElement>(`[data-selection-key="${selectedId}"]`)!;
+
+    fireEvent.pointerDown(row.querySelector(".cm-content")!, { button: 0, pointerId: 18, ctrlKey: true });
+    const cutButton = document.body.querySelector<HTMLElement>('button[aria-label="剪切节点"]')!;
+    fireEvent.pointerDown(cutButton, { button: 0, pointerId: 19 });
+    fireEvent.click(cutButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("cut target");
+      expect(useNotebookStore.getState().nodes[selectedId].deletedAt).not.toBeNull();
+    });
+  });
+
+  it("indents a non-contiguous Ctrl+click selection independently", async () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const a = Object.values(initial.nodes).find((node) => node.parentId === date.id)!;
+    const bId = initial.createChild(date.id, "B")!;
+    const cId = useNotebookStore.getState().createChild(date.id, "C")!;
+    const dId = useNotebookStore.getState().createChild(date.id, "D")!;
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const bRow = container.querySelector<HTMLElement>(`[data-selection-key="${bId}"]`)!;
+    const dRow = container.querySelector<HTMLElement>(`[data-selection-key="${dId}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+
+    fireEvent.pointerDown(bRow.querySelector(".cm-content")!, { button: 0, pointerId: 12, ctrlKey: true });
+    fireEvent.pointerDown(dRow.querySelector(".cm-content")!, { button: 0, pointerId: 13, ctrlKey: true });
+    fireEvent.keyDown(area, { key: "Tab", code: "Tab" });
+
+    await waitFor(() => {
+      const state = useNotebookStore.getState();
+      expect(state.nodes[bId].parentId).toBe(a.id);
+      expect(state.nodes[dId].parentId).toBe(cId);
+      expect(container.querySelector(`[data-selection-key="${bId}"]`)?.classList.contains("is-node-selected")).toBe(true);
+      expect(container.querySelector(`[data-selection-key="${dId}"]`)?.classList.contains("is-node-selected")).toBe(true);
+    });
+  });
+
+  it("outdents a selected range with Shift+Tab and keeps it selected", async () => {
+    const initial = useNotebookStore.getState();
+    const date = Object.values(initial.nodes).find((node) => node.kind === "date")!;
+    const parentId = initial.createChild(date.id, "parent")!;
+    const aId = useNotebookStore.getState().createChild(parentId, "A")!;
+    const bId = useNotebookStore.getState().createChild(parentId, "B")!;
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const aRow = container.querySelector<HTMLElement>(`[data-selection-key="${aId}"]`)!;
+    const bRow = container.querySelector<HTMLElement>(`[data-selection-key="${bId}"]`)!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    dragTo(bRow);
+
+    fireEvent.pointerDown(aRow.querySelector(".cm-content")!, { button: 0, pointerId: 11, clientX: 60, clientY: 20 });
+    fireEvent.pointerMove(area, { pointerId: 11, clientX: 20, clientY: 80 });
+    fireEvent.pointerUp(area, { pointerId: 11, clientX: 20, clientY: 80 });
+    fireEvent.keyDown(area, { key: "Tab", code: "Tab", shiftKey: true });
+
+    await waitFor(() => {
+      const state = useNotebookStore.getState();
+      expect(state.nodes[aId].parentId).toBe(date.id);
+      expect(state.nodes[bId].parentId).toBe(date.id);
+      expect(container.querySelector(`[data-selection-key="${aId}"]`)?.classList.contains("is-node-selected")).toBe(true);
+      expect(container.querySelector(`[data-selection-key="${bId}"]`)?.classList.contains("is-node-selected")).toBe(true);
+    });
   });
 
   it("focuses the page ghost after deleting every node on the current page", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
@@ -9,9 +9,11 @@ import { planMultilinePaste } from "./editorClipboard";
 import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme } from "./editorTheme";
-import { EditorCommandMenu } from "./EditorCommandMenu";
+import { EditorCommandMenu, type FileInsertOutcome, type FileInsertStatus } from "./EditorCommandMenu";
+import { requestAttachmentInsertionEffect } from "./attachmentUploadState";
 import { createMarkdownEditorExtensions } from "./markdown/markdownEditor";
-import { runWithEditorNode, type EditorTarget } from "./editorTarget";
+import { runWithEditorNode, runWithPersistedEditor, type EditorTarget } from "./editorTarget";
+import { chooseAttachmentPaths } from "../platform/nativeAttachments";
 
 interface Props {
   /** Parent the eventual real node should be created under. */
@@ -30,12 +32,42 @@ interface Props {
 export function GhostEditor({ parentId }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | undefined>(undefined);
+  const targetRef = useRef<EditorTarget | null>(null);
   const handedOff = useRef(false);
   const composing = useRef(false);
+  const [fileStatus, setFileStatus] = useState<FileInsertStatus>({ kind: "idle", message: "" });
   const createChild = useNotebookStore((state) => state.createChild);
   const toggleNode = useNotebookStore((state) => state.toggleNode);
 
   const shouldFocus = useNotebookStore((state) => state.activeGhostParentId === parentId);
+
+  const pickFiles = useCallback(async (): Promise<FileInsertOutcome> => {
+    try {
+      const paths = await chooseAttachmentPaths();
+      if (!paths.length) return { inserted: 0, failed: 0 };
+      const editor = view.current;
+      const target = targetRef.current;
+      if (!editor || !target) throw new Error("虚节点编辑器尚未就绪");
+      const accepted = await runWithPersistedEditor(
+        target,
+        editor,
+        findRealEditor,
+        (_nodeId, persistedEditor) => {
+          persistedEditor.dispatch({ effects: requestAttachmentInsertionEffect(paths) });
+          return true;
+        },
+      );
+      if (!accepted) throw new Error("无法创建附件节点");
+      setFileStatus({ kind: "idle", message: "" });
+      return { inserted: 0, failed: 0 };
+    } catch (error) {
+      setFileStatus({
+        kind: "error",
+        message: error instanceof Error ? error.message : "无法选择文件",
+      });
+      return { inserted: 0, failed: 1 };
+    }
+  }, []);
 
   useEffect(() => {
     if (!host.current) return;
@@ -55,13 +87,13 @@ export function GhostEditor({ parentId }: Props) {
       if (newNodeId) focusRealEditor(newNodeId, caret);
       return newNodeId;
     };
-
     const target: EditorTarget = {
       kind: "draft",
       nodeId: null,
       parentId,
       materialize: (markdown) => materialize(markdown),
     };
+    targetRef.current = target;
 
     const createBlankChild = () => {
       createChild(parentId, "");
@@ -174,7 +206,11 @@ export function GhostEditor({ parentId }: Props) {
       ],
     });
     view.current = new EditorView({ state, parent: host.current });
-    return () => { view.current?.destroy(); view.current = undefined; };
+    return () => {
+      if (targetRef.current === target) targetRef.current = null;
+      view.current?.destroy();
+      view.current = undefined;
+    };
   }, [parentId, createChild, toggleNode]);
 
   useEffect(() => {
@@ -192,15 +228,19 @@ export function GhostEditor({ parentId }: Props) {
   return (
     <div className="inline-editor-shell">
       <div className="inline-editor ghost-editor" ref={host} aria-label="新建节点" />
-      <EditorCommandMenu getEditor={() => view.current} />
+      <EditorCommandMenu
+        getEditor={() => view.current}
+        onPickFiles={pickFiles}
+        onRetryFiles={pickFiles}
+        fileStatus={fileStatus}
+      />
     </div>
   );
 }
 
 function focusRealEditor(nodeId: string, caret: number, attempt = 0): void {
   requestAnimationFrame(() => {
-    const host = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .inline-editor`);
-    const editor = host ? EditorView.findFromDOM(host) : null;
+    const editor = findRealEditor(nodeId);
     if (!editor) {
       if (attempt < 5) focusRealEditor(nodeId, caret, attempt + 1);
       return;
@@ -209,4 +249,9 @@ function focusRealEditor(nodeId: string, caret: number, attempt = 0): void {
     editor.dispatch({ selection: { anchor: pos } });
     editor.focus();
   });
+}
+
+function findRealEditor(nodeId: string): EditorView | null {
+  const host = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .inline-editor`);
+  return host ? EditorView.findFromDOM(host) : null;
 }

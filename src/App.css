@@ -446,6 +446,54 @@ h1 { font-size: 28px; line-height: 1.25; letter-spacing: -.02em; margin-bottom: 
 .editor-command-status.is-error { color: #a33a31; }
 .editor-command-retry { flex: 0 0 auto; border: 0; padding: 2px 4px; background: transparent; color: var(--leaf); font-size: 11px; }
 .editor-command-retry:hover { text-decoration: underline; text-underline-offset: 2px; }
+.selection-menu {
+  position: fixed;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  color: var(--ink);
+  isolation: isolate;
+}
+.selection-menu-button {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-xs);
+  padding: 0;
+  background: transparent;
+  color: var(--ink-muted);
+}
+.selection-menu-button:hover,
+.selection-menu-button:focus-visible { background: var(--surface-hover); color: var(--ink); }
+.selection-menu-button:disabled { opacity: .42; cursor: not-allowed; }
+.selection-menu-feedback {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 5px);
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.selection-menu-feedback.is-success { color: var(--leaf); }
+.selection-menu-feedback.is-error { color: #a33a31; }
+.node-selection-menu { gap: 3px; }
+.inline-selection-menu { gap: 2px; }
 @keyframes cm-pending-attachment-spin { to { transform: rotate(360deg); } }
 
 /* 拖拽预览保留原树的可见层级，只弱化内容本身。 */

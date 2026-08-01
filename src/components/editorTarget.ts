@@ -11,6 +11,8 @@ export interface EditorTarget {
   materialize: (markdown: string) => string | null;
 }
 
+export type PersistedEditorResolver = (nodeId: string) => EditorView | null;
+
 /** Resolves the stable node identity required by data-backed commands. */
 export function ensureEditorNodeId(target: EditorTarget, editor: EditorView): string | null {
   if (target.nodeId) return target.nodeId;
@@ -50,10 +52,56 @@ export function runWithEditorNode(
   return true;
 }
 
+/**
+ * Runs an editor-backed command on the persisted editor that owns the target.
+ * Callers provide the resolver so this lifecycle module stays independent from
+ * DOM structure and feature-specific commands.
+ */
+export async function runWithPersistedEditor(
+  target: EditorTarget,
+  editor: EditorView,
+  resolveEditor: PersistedEditorResolver,
+  command: (nodeId: string, persistedEditor: EditorView) => boolean,
+): Promise<boolean> {
+  if (target.kind === "draft" && target.nodeId !== null) return false;
+  const materializesDraft = target.kind === "draft" && target.nodeId === null;
+  const nodeId = ensureEditorNodeId(target, editor);
+  if (!nodeId) return false;
+  if (!materializesDraft) return command(nodeId, editor);
+
+  try {
+    const persistedEditor = await resolveAfterDraftHandoff(nodeId, resolveEditor);
+    return persistedEditor ? command(nodeId, persistedEditor) : false;
+  } finally {
+    if (target.kind === "draft" && target.nodeId === nodeId) target.nodeId = null;
+  }
+}
+
 function runAfterDraftHandoff(command: () => void): void {
   if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
     window.requestAnimationFrame(() => window.requestAnimationFrame(command));
     return;
   }
   queueMicrotask(() => queueMicrotask(command));
+}
+
+async function resolveAfterDraftHandoff(
+  nodeId: string,
+  resolveEditor: PersistedEditorResolver,
+): Promise<EditorView | null> {
+  await nextAnimationFrame();
+  await nextAnimationFrame();
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const editor = resolveEditor(nodeId);
+    if (editor) return editor;
+    await nextAnimationFrame();
+  }
+  return null;
+}
+
+function nextAnimationFrame(): Promise<void> {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+  return new Promise((resolve) => queueMicrotask(resolve));
 }

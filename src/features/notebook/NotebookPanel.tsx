@@ -18,6 +18,7 @@ import { TreeBlockRow } from "../../components/TreeRow";
 import { treeBlockAtPoint } from "../../components/treeHitTesting";
 import { treeBlockSubtreeKeys } from "../../components/treeBlock";
 import { InlineEditor } from "../../components/InlineEditor";
+import { SelectionMenu, selectionMenuIcons, type SelectionMenuAnchor } from "../../components/SelectionMenu";
 import { createTreeDropSlots, type TreeDropSlot, type VisibleDropPlaceholder, type VisibleTreeNode } from "../../domain/dropSlots";
 import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
@@ -83,6 +84,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   const [subtreeBoxes, setSubtreeBoxes] = useState<MeasuredSubtreeBox[]>([]);
   const [nodeBoxes, setNodeBoxes] = useState<MeasuredNodeBox[]>([]);
   const [selectionBoxes, setSelectionBoxes] = useState<MeasuredSubtreeBox[]>([]);
+  const [nodeSelectionAnchor, setNodeSelectionAnchor] = useState<SelectionMenuAnchor | null>(null);
   const [layoutDebugVisibility, setLayoutDebugVisibility] = useState(DEFAULT_LAYOUT_DEBUG_VISIBILITY);
   const dropSlotRef = useRef<TreeDropSlot | null>(null);
   const activeDragIdRef = useRef<string | null>(null);
@@ -254,6 +256,55 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       window.removeEventListener("resize", measure);
     };
   }, [isVisible, layoutDebug, layoutSignature, rootId, selectionRootSignature]);
+  useLayoutEffect(() => {
+    if (!isVisible || !nodeSelection.selectionMenuReady
+      || !nodeSelection.selectedKeys.size || !nodeSelection.selectionRootKeys.size) {
+      setNodeSelectionAnchor(null);
+      return;
+    }
+    let animationFrame: number | null = null;
+    const measure = () => {
+      const roots = nodeSelection.selectionRootKeys;
+      const elements = Array.from(contentAreaRef.current?.querySelectorAll<HTMLElement>("[data-selection-key]") ?? [])
+        .filter((element) => roots.has(element.dataset.selectionKey ?? ""));
+      const rects = elements.flatMap((element) => {
+        const row = element.getBoundingClientRect();
+        if (!row.width && !row.height) return [];
+        const object = element.querySelector<HTMLElement>(".node-bullet, .inline-editor")?.getBoundingClientRect();
+        return [{ left: object?.left ?? row.left, right: row.right, top: row.top, bottom: row.bottom }];
+      });
+      if (!rects.length) {
+        const fallback = treeListRef.current?.getBoundingClientRect();
+        if (!fallback) return;
+        setNodeSelectionAnchor({ left: fallback.left, right: fallback.right, top: fallback.top, bottom: fallback.top });
+        return;
+      }
+      setNodeSelectionAnchor({
+        left: Math.min(...rects.map((rect) => rect.left)),
+        right: Math.max(...rects.map((rect) => rect.right)),
+        top: Math.min(...rects.map((rect) => rect.top)),
+        bottom: Math.max(...rects.map((rect) => rect.bottom)),
+      });
+    };
+    measure();
+
+    const motion = treeLayoutMotion.current;
+    if (motion && typeof window.requestAnimationFrame === "function") {
+      const motionEnd = motion.startedAt + TREE_LAYOUT_ANIMATION_DURATION;
+      const followMotion = (timestamp: number) => {
+        measure();
+        if (timestamp < motionEnd) animationFrame = window.requestAnimationFrame(followMotion);
+      };
+      animationFrame = window.requestAnimationFrame(followMotion);
+    }
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [isVisible, layoutSignature, nodeSelection.selectedKeys.size, nodeSelection.selectionMenuReady, selectionRootSignature]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 280, tolerance: 6 } }),
@@ -662,6 +713,23 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
           ) : null}
         </DragOverlay>
       </DndContext>
+      <SelectionMenu
+        anchor={nodeSelectionAnchor}
+        ariaLabel="节点选区菜单"
+        className="node-selection-menu"
+        alignment="start"
+        actions={[
+          { id: "copy", label: "复制节点", icon: selectionMenuIcons.copy, onSelect: nodeSelection.copySelection, feedback: "已复制", failureFeedback: "复制失败" },
+          { id: "cut", label: "剪切节点", icon: selectionMenuIcons.cut, onSelect: nodeSelection.cutSelection, failureFeedback: "剪切失败" },
+          ...(nodeSelection.canOutdentSelection
+            ? [{ id: "outdent", label: "提升节点", icon: selectionMenuIcons.outdent, onSelect: nodeSelection.outdentSelection }]
+            : []),
+          ...(nodeSelection.canIndentSelection
+            ? [{ id: "indent", label: "缩进节点", icon: selectionMenuIcons.indent, onSelect: nodeSelection.indentSelection }]
+            : []),
+          { id: "delete", label: "删除节点", icon: selectionMenuIcons.delete, onSelect: nodeSelection.deleteSelection },
+        ]}
+      />
       </div>
     </div>
   );

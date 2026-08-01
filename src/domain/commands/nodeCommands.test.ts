@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { executeDeleteNode, executeDeleteSelection } from "./deleteNode";
 import { executeMergeNode } from "./mergeNode";
-import { canExecuteDraftMove, executeMoveNode } from "./moveNode";
+import { canExecuteDraftMove, executeIndentSelection, executeMoveNode, executeOutdentSelection } from "./moveNode";
 import { executeSplitNode } from "./splitNode";
 import { createEmptyState, ROOT_ID, type NotebookState } from "../model";
 import { childrenOf, createNode } from "../tree";
@@ -178,6 +178,93 @@ describe("node domain commands", () => {
     expect(result.changed).toBe(false);
     expect(result.state.nodes.first.parentId).toBe(ROOT_ID);
     expect(result.state.nodes.descendant.parentId).toBe("first");
+  });
+
+  it("indents adjacent selected siblings under their nearest unselected predecessor", () => {
+    let state = addNode(createEmptyState(), "a", ROOT_ID, "A");
+    state = addNode(state, "a1", "a", "A1");
+    state = addNode(state, "b", ROOT_ID, "B");
+    state = addNode(state, "c", ROOT_ID, "C");
+    state = addNode(state, "d", ROOT_ID, "D");
+
+    const result = executeIndentSelection(state, ["b", "c"], 10);
+
+    expect(result.movedNodeIds).toEqual(["b", "c"]);
+    expect(childrenOf(result.state, ROOT_ID).map((node) => node.id)).toEqual(["a", "d"]);
+    expect(childrenOf(result.state, "a").map((node) => node.id)).toEqual(["a1", "b", "c"]);
+  });
+
+  it("indents non-contiguous roots independently and skips roots without a predecessor", () => {
+    let state = addNode(createEmptyState(), "a", ROOT_ID, "A");
+    state = addNode(state, "b", ROOT_ID, "B");
+    state = addNode(state, "c", ROOT_ID, "C");
+    state = addNode(state, "d", ROOT_ID, "D");
+    state = addNode(state, "p", ROOT_ID, "P");
+    state = addNode(state, "p-first", "p", "first");
+    state = addNode(state, "q", ROOT_ID, "Q");
+    state = addNode(state, "q-first", "q", "first");
+    state = addNode(state, "q-second", "q", "second");
+
+    const result = executeIndentSelection(state, ["b", "d", "p-first", "q-second"], 10);
+
+    expect(result.movedNodeIds).toEqual(["b", "d", "q-second"]);
+    expect(result.state.nodes.b.parentId).toBe("a");
+    expect(result.state.nodes.d.parentId).toBe("c");
+    expect(result.state.nodes["p-first"].parentId).toBe("p");
+    expect(result.state.nodes["q-second"].parentId).toBe("q-first");
+  });
+
+  it("moves a selected parent subtree once even when descendants are included", () => {
+    let state = addNode(createEmptyState(), "p", ROOT_ID, "P");
+    state = addNode(state, "a", ROOT_ID, "A");
+    state = addNode(state, "a1", "a", "A1");
+    state = addNode(state, "a2", "a", "A2");
+
+    const result = executeIndentSelection(state, ["a", "a1", "a2"], 10);
+
+    expect(result.movedNodeIds).toEqual(["a"]);
+    expect(result.state.nodes.a.parentId).toBe("p");
+    expect(childrenOf(result.state, "a").map((node) => node.id)).toEqual(["a1", "a2"]);
+  });
+
+  it("does nothing when every selected sibling lacks an unselected predecessor", () => {
+    let state = addNode(createEmptyState(), "a", ROOT_ID, "A");
+    state = addNode(state, "b", ROOT_ID, "B");
+    state = addNode(state, "c", ROOT_ID, "C");
+
+    const result = executeIndentSelection(state, ["a", "b"], 10);
+
+    expect(result.changed).toBe(false);
+    expect(result.state).toBe(state);
+    expect(result.movedNodeIds).toEqual([]);
+    expect(childrenOf(state, ROOT_ID).map((node) => node.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("outdents selected sibling subtrees in their original order", () => {
+    let state = addNode(createEmptyState(), "page", ROOT_ID, "page");
+    state = addNode(state, "parent", "page", "parent");
+    state = addNode(state, "a", "parent", "A");
+    state = addNode(state, "a1", "a", "A1");
+    state = addNode(state, "b", "parent", "B");
+
+    const result = executeOutdentSelection(state, ["a", "a1", "b"], "page", 10);
+
+    expect(result.movedNodeIds).toEqual(["a", "b"]);
+    expect(childrenOf(result.state, "page").map((node) => node.id)).toEqual(["parent", "a", "b"]);
+    expect(result.state.nodes.a1.parentId).toBe("a");
+  });
+
+  it("partially outdents a selection at the current page boundary", () => {
+    let state = addNode(createEmptyState(), "page", ROOT_ID, "page");
+    state = addNode(state, "direct", "page", "direct");
+    state = addNode(state, "parent", "page", "parent");
+    state = addNode(state, "nested", "parent", "nested");
+
+    const result = executeOutdentSelection(state, ["direct", "nested"], "page", 10);
+
+    expect(result.movedNodeIds).toEqual(["nested"]);
+    expect(result.state.nodes.direct.parentId).toBe("page");
+    expect(result.state.nodes.nested.parentId).toBe("page");
   });
 
   it("rejects outdenting a direct child beyond the current page root", () => {

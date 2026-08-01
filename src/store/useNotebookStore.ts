@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { executeDeleteNode, executeDeleteSelection, executeRestoreSubtree } from "../domain/commands/deleteNode";
-import { executeMoveNode, type MoveNodeIntent } from "../domain/commands/moveNode";
+import { executeIndentSelection, executeMoveNode, executeOutdentSelection, type MoveNodeIntent } from "../domain/commands/moveNode";
 import { executeSplitNode } from "../domain/commands/splitNode";
 import { createSeedState, ensureDateNode, updateMarkdown, toggleCollapsed, setChildrenExpanded, isNodeExpanded, hasChildren, childrenOf, createNode } from "../domain/tree";
 import { newId, ROOT_ID, type AttachmentRecord, type NodeField, type Operation, type NotebookState } from "../domain/model";
@@ -228,10 +228,20 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       commit(next, createOperation("update_markdown", nodeId, { markdown }, previous?.revision ?? 0));
     },
     indent: (nodeId) => moveNode({ type: "indent", nodeId }, createOperation("indent", nodeId, {})),
+    indentNodes: (nodeIds) => {
+      const result = executeIndentSelection(get(), nodeIds, Date.now());
+      if (!result.changed) return;
+      commit(result.state, createOperation("indent_nodes", result.movedNodeIds[0], { nodeIds: result.movedNodeIds }));
+    },
     outdent: (nodeId) => moveNode(
       { type: "outdent", nodeId, boundaryRootId: get().activeRootId },
       createOperation("outdent", nodeId, {}),
     ),
+    outdentNodes: (nodeIds) => {
+      const result = executeOutdentSelection(get(), nodeIds, get().activeRootId, Date.now());
+      if (!result.changed) return;
+      commit(result.state, createOperation("outdent_nodes", result.movedNodeIds[0], { nodeIds: result.movedNodeIds }));
+    },
     moveToSlot: (nodeId, parentId, beforeId) => moveNode(
       { type: "slot", nodeId, parentId, beforeId },
       createOperation("move_slot", nodeId, { parentId, beforeId }),

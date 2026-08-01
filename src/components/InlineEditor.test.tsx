@@ -221,6 +221,39 @@ describe("InlineEditor", () => {
     expect(editor.hasFocus).toBe(true);
   });
 
+  it("shows a compact menu for a non-empty inline selection", async () => {
+    const node = firstContentNode();
+    useNotebookStore.getState().editMarkdown(node.id, "select me");
+    const { getByLabelText } = render(<StoreEditor nodeId={node.id} />);
+    const host = getByLabelText("节点内容");
+    const editor = EditorView.findFromDOM(host)!;
+    editor.dispatch({ selection: { anchor: 0, head: 6 } });
+    editor.focus();
+
+    await waitFor(() => expect(document.body.querySelector('[role="toolbar"][aria-label="文本选区菜单"]')).not.toBeNull());
+    expect(document.body.querySelector('button[aria-label="粗体"]')).not.toBeNull();
+    expect(document.body.querySelector('button[aria-label="复制文本"]')).not.toBeNull();
+  });
+
+  it("waits until text dragging ends before showing the inline selection menu", async () => {
+    const node = firstContentNode();
+    useNotebookStore.getState().editMarkdown(node.id, "drag select");
+    const { getByLabelText } = render(<StoreEditor nodeId={node.id} />);
+    const host = getByLabelText("节点内容");
+    const content = host.querySelector<HTMLElement>(".cm-content")!;
+    const editor = EditorView.findFromDOM(host)!;
+    editor.focus();
+
+    fireEvent.mouseDown(content, { button: 0 });
+    editor.dispatch({ selection: { anchor: 0, head: 4 }, userEvent: "select.pointer" });
+
+    expect(document.body.querySelector('[role="toolbar"][aria-label="文本选区菜单"]')).toBeNull();
+
+    fireEvent.pointerUp(document, { button: 0 });
+
+    await waitFor(() => expect(document.body.querySelector('[role="toolbar"][aria-label="文本选区菜单"]')).not.toBeNull());
+  });
+
   it("shows newly inserted strikethrough marks while the formatted text stays selected", async () => {
     const node = firstContentNode();
     useNotebookStore.getState().editMarkdown(node.id, "format me");

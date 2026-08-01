@@ -1,9 +1,19 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GhostEditor } from "./GhostEditor";
+import { InlineEditor } from "./InlineEditor";
+import type { AttachmentRecord } from "../domain/model";
+import type { AttachmentPathSource } from "../platform/attachments";
 import { childrenOf } from "../domain/tree";
 import { useNotebookStore } from "../store/useNotebookStore";
+
+const nativeAttachmentMocks = vi.hoisted(() => ({
+  chooseAttachmentPaths: vi.fn(),
+  listenNativeFileDrop: vi.fn(async () => vi.fn()),
+}));
+
+vi.mock("../platform/nativeAttachments", () => nativeAttachmentMocks);
 
 function activeContentNodes() {
   return Object.values(useNotebookStore.getState().nodes).filter(
@@ -11,9 +21,42 @@ function activeContentNodes() {
   );
 }
 
+function GhostAttachmentHarness({ parentId }: { parentId: string }) {
+  const nodes = useNotebookStore((state) => state.nodes);
+  const children = Object.values(nodes)
+    .filter((node) => node.parentId === parentId && node.kind === "content" && !node.deletedAt)
+    .sort((left, right) => left.sortKey - right.sortKey || left.createdAt - right.createdAt);
+  return (
+    <>
+      {children.map((node) => (
+        <div key={node.id} data-node-id={node.id}>
+          <InlineEditor nodeId={node.id} value={node.markdown} />
+        </div>
+      ))}
+      <GhostEditor parentId={parentId} />
+    </>
+  );
+}
+
+function attachmentFor(nodeId: string, name: string): AttachmentRecord {
+  return {
+    id: `attachment-${name}`,
+    nodeId,
+    name,
+    mime: "text/plain",
+    size: 3,
+    sha256: `hash-${name}`,
+    localPath: `C:\\app\\attachments\\${name}`,
+    remotePath: `remote/${name}`,
+    pinned: false,
+    createdAt: 1,
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
   useNotebookStore.setState(useNotebookStore.getInitialState(), true);
+  nativeAttachmentMocks.chooseAttachmentPaths.mockReset();
 });
 
 afterEach(() => cleanup());
@@ -68,6 +111,73 @@ describe("GhostEditor", () => {
         (node) => node.kind === "content" && node.markdown === "****",
       )).toBe(true);
     });
+  });
+
+  it("does not materialize when file selection is cancelled", async () => {
+    const parent = activeContentNodes()[0];
+    const beforeCount = activeContentNodes().length;
+    nativeAttachmentMocks.chooseAttachmentPaths.mockResolvedValue([]);
+    const { getByRole } = render(<GhostEditor parentId={parent.id} />);
+
+    fireEvent.click(getByRole("button", { name: "打开插入与格式菜单" }));
+    fireEvent.click(getByRole("button", { name: "插入文件" }));
+
+    await waitFor(() => expect(nativeAttachmentMocks.chooseAttachmentPaths).toHaveBeenCalledOnce());
+    expect(activeContentNodes()).toHaveLength(beforeCount);
+  });
+
+  it("materializes once and hands selected files to the real editor", async () => {
+    const parent = activeContentNodes()[0];
+    const path = "C:\\source\\ghost.txt";
+    nativeAttachmentMocks.chooseAttachmentPaths.mockResolvedValue([path]);
+    const addAttachment = vi.fn(async (nodeId: string, _source: AttachmentPathSource) =>
+      attachmentFor(nodeId, "ghost.txt"));
+    useNotebookStore.setState({ addAttachment });
+    const { getByRole } = render(<GhostAttachmentHarness parentId={parent.id} />);
+
+    fireEvent.click(getByRole("button", { name: "打开插入与格式菜单" }));
+    fireEvent.click(getByRole("button", { name: "插入文件" }));
+
+    await waitFor(() => {
+      const children = childrenOf(useNotebookStore.getState(), parent.id);
+      expect(children).toHaveLength(1);
+      expect(children[0].markdown).toBe("[ghost.txt](attachment://attachment-ghost.txt)");
+    });
+    const created = childrenOf(useNotebookStore.getState(), parent.id)[0];
+    expect(addAttachment).toHaveBeenCalledWith(created.id, { path });
+  });
+
+  it("keeps failed virtual-node insertions retryable on the real editor", async () => {
+    const parent = activeContentNodes()[0];
+    const path = "C:\\source\\retry.txt";
+    nativeAttachmentMocks.chooseAttachmentPaths.mockResolvedValue([path]);
+    const addAttachment = vi.fn()
+      .mockRejectedValueOnce(new Error("无法读取文件"))
+      .mockImplementationOnce(async (nodeId: string) => attachmentFor(nodeId, "retry.txt"));
+    useNotebookStore.setState({ addAttachment });
+    const { getAllByRole, getByLabelText, getByRole } = render(<GhostAttachmentHarness parentId={parent.id} />);
+
+    fireEvent.click(getByRole("button", { name: "打开插入与格式菜单" }));
+    fireEvent.click(getByRole("button", { name: "插入文件" }));
+
+    await waitFor(() => expect(getByLabelText("节点内容")).toBeTruthy());
+    const realEditorShell = getByLabelText("节点内容").closest(".inline-editor-shell")!;
+    await waitFor(() => {
+      expect(addAttachment).toHaveBeenCalledOnce();
+      expect(realEditorShell.querySelector(".cm-pending-attachment")).toBeNull();
+    });
+    const realMenuTrigger = Array.from(getAllByRole("button", { name: "打开插入与格式菜单" }))
+      .find((button) => realEditorShell.contains(button))!;
+    fireEvent.click(realMenuTrigger);
+    expect(getByRole("status").textContent).toContain("无法读取文件");
+
+    fireEvent.click(getByRole("button", { name: "重试" }));
+    await waitFor(() => {
+      const created = childrenOf(useNotebookStore.getState(), parent.id)[0];
+      expect(created.markdown).toBe("[retry.txt](attachment://attachment-retry.txt)");
+    });
+    expect(addAttachment).toHaveBeenCalledTimes(2);
+    expect(childrenOf(useNotebookStore.getState(), parent.id)).toHaveLength(1);
   });
 
   it("splits multiline paste into ordered child nodes", async () => {

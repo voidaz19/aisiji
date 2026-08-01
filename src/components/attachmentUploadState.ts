@@ -16,6 +16,7 @@ const addPendingAttachmentUpload = StateEffect.define<PendingAttachmentUpload>({
   }),
 });
 const removePendingAttachmentUpload = StateEffect.define<string>();
+const requestAttachmentInsertion = StateEffect.define<readonly string[]>();
 
 class PendingAttachmentWidget extends WidgetType {
   constructor(private readonly label: string) { super(); }
@@ -70,6 +71,24 @@ export const pendingAttachmentUploads = StateField.define<ReadonlyMap<string, Pe
 });
 
 export const pendingAttachmentUploadExtension: Extension = pendingAttachmentUploads;
+
+export function attachmentInsertionRequestExtension(
+  onRequest: (paths: readonly string[], view: EditorView) => void,
+): Extension {
+  return EditorView.updateListener.of((update) => {
+    for (const transaction of update.transactions) {
+      for (const effect of transaction.effects) {
+        if (!effect.is(requestAttachmentInsertion)) continue;
+        const paths = effect.value;
+        queueMicrotask(() => onRequest(paths, update.view));
+      }
+    }
+  });
+}
+
+export function requestAttachmentInsertionEffect(paths: readonly string[]): StateEffect<readonly string[]> {
+  return requestAttachmentInsertion.of(paths);
+}
 
 export function beginPendingAttachmentUpload(
   view: EditorView,

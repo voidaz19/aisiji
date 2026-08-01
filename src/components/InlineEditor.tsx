@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -6,6 +6,7 @@ import { newId, ROOT_ID, type AttachmentRecord } from "../domain/model";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { planAttachmentInsertion } from "./attachmentInsertion";
 import {
+  attachmentInsertionRequestExtension,
   beginPendingAttachmentUpload,
   finishPendingAttachmentUpload,
   pendingAttachmentUploadExtension,
@@ -13,14 +14,17 @@ import {
 } from "./attachmentUploadState";
 import { planMultilinePaste } from "./editorClipboard";
 import { EditorCommandMenu, type FileInsertOutcome, type FileInsertStatus } from "./EditorCommandMenu";
+import { SelectionMenu, selectionMenuIcons, type SelectionMenuAnchor } from "./SelectionMenu";
 import { createEditorKeymap } from "./editorKeymap";
 import { crossNodeNavigationKeymap } from "./editorNavigation";
 import { editorTheme } from "./editorTheme";
 import { runWithEditorNode, type EditorTarget } from "./editorTarget";
 import { createMarkdownEditorExtensions } from "./markdown/markdownEditor";
 import { atMarkdownVisualEnd, atMarkdownVisualStart } from "./markdown/markdownDecorations";
+import { toggleBold, toggleHighlight, toggleInlineCode, toggleItalic, toggleStrikethrough } from "./markdown/markdownCommands";
 import { chooseAttachmentPaths, listenNativeFileDrop } from "../platform/nativeAttachments";
 import { hasTauriRuntime } from "../platform/runtime";
+import { writeClipboardText } from "../platform/clipboard";
 
 interface Props {
   nodeId: string;
@@ -37,6 +41,9 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     variant === "root" || typeof IntersectionObserver === "undefined",
   );
   const [fileStatus, setFileStatus] = useState<FileInsertStatus>({ kind: "idle", message: "" });
+  const [inlineSelectionAnchor, setInlineSelectionAnchor] = useState<SelectionMenuAnchor | null>(null);
+  const selectionMenuSync = useRef<(editor: EditorView) => void>(() => undefined);
+  const textSelectionDragging = useRef(false);
   const editMarkdown = useNotebookStore((state) => state.editMarkdown);
   const setActiveNode = useNotebookStore((state) => state.setActiveNode);
   const createSibling = useNotebookStore((state) => state.createSibling);
@@ -58,6 +65,24 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     materialize: () => nodeId,
   };
   const shouldMountEditor = variant === "root" || isActiveNode || nearViewport;
+  selectionMenuSync.current = (editor) => {
+    const range = editor.state.selection.main;
+    const contentArea = host.current?.closest<HTMLElement>(".content-area");
+    const commandMenuOpen = host.current?.parentElement?.querySelector(".editor-command-trigger[aria-expanded='true']");
+    if (textSelectionDragging.current || !editor.hasFocus || range.empty || editor.composing || commandMenuOpen
+      || contentArea?.classList.contains("has-node-selection")) {
+      setInlineSelectionAnchor(null);
+      return;
+    }
+    const from = editor.coordsAtPos(range.from, -1);
+    const to = editor.coordsAtPos(range.to, 1);
+    const fallback = editor.dom.getBoundingClientRect();
+    const left = Math.min(from?.left ?? fallback.left, to?.left ?? fallback.left);
+    const right = Math.max(from?.right ?? fallback.right, to?.right ?? fallback.right);
+    const top = Math.min(from?.top ?? fallback.top, to?.top ?? fallback.top);
+    const bottom = Math.max(from?.bottom ?? fallback.bottom, to?.bottom ?? fallback.bottom);
+    setInlineSelectionAnchor({ left, right, top, bottom });
+  };
 
   const insertPaths = useCallback(async (
     paths: readonly string[],
@@ -145,6 +170,9 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
       extensions: [
         ...createMarkdownEditorExtensions(nodeId),
         pendingAttachmentUploadExtension,
+        attachmentInsertionRequestExtension((paths, targetEditor) => {
+          if (view.current === targetEditor) void insertPaths(paths, targetEditor);
+        }),
         history(),
         EditorView.lineWrapping,
         keymap.of([
@@ -190,10 +218,13 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
         ]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !syncingValue.current) editMarkdown(nodeId, update.state.doc.toString());
+          if (update.selectionSet || update.focusChanged || update.docChanged) selectionMenuSync.current(update.view);
         }),
         EditorView.domEventHandlers({
           focus: () => { setActiveNode(nodeId); return false; },
           mousedown: (_event, editor) => {
+            textSelectionDragging.current = true;
+            setInlineSelectionAnchor(null);
             // Dragging a text selection can leave DOM focus on whatever
             // element previously had it (or nothing at all) if the browser
             // doesn't treat the drag as a focus-worthy interaction. Without
@@ -242,6 +273,7 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
       ],
     });
     view.current = new EditorView({ state, parent: host.current });
+    selectionMenuSync.current(view.current);
     return () => { view.current?.destroy(); view.current = undefined; };
   }, [nodeId, shouldMountEditor, variant, insertPaths]);
 
@@ -305,6 +337,49 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     };
   }, [insertPaths, nodeId, shouldMountEditor]);
 
+  useEffect(() => {
+    const area = host.current?.closest<HTMLElement>(".content-area");
+    const shell = host.current?.closest<HTMLElement>(".inline-editor-shell");
+    if (!shell) return;
+    const hideForCommandMenu = (event: Event) => {
+      if ((event.target as Element | null)?.closest(".editor-command-trigger")) setInlineSelectionAnchor(null);
+    };
+    const finishTextSelection = () => {
+      if (!textSelectionDragging.current) return;
+      textSelectionDragging.current = false;
+      setTimeout(() => {
+        if (view.current) selectionMenuSync.current(view.current);
+      }, 0);
+    };
+    const cancelTextSelection = () => {
+      textSelectionDragging.current = false;
+      setInlineSelectionAnchor(null);
+    };
+    shell.addEventListener("click", hideForCommandMenu, true);
+    document.addEventListener("pointerup", finishTextSelection);
+    document.addEventListener("mouseup", finishTextSelection);
+    document.addEventListener("pointercancel", cancelTextSelection);
+    const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(() => {
+      if (view.current) selectionMenuSync.current(view.current);
+    });
+    if (area) observer?.observe(area, { attributes: true, attributeFilter: ["class"] });
+    observer?.observe(shell, { attributes: true, subtree: true, attributeFilter: ["class", "aria-expanded"] });
+    const refreshPosition = () => {
+      if (view.current) selectionMenuSync.current(view.current);
+    };
+    window.addEventListener("resize", refreshPosition);
+    window.addEventListener("scroll", refreshPosition, true);
+    return () => {
+      observer?.disconnect();
+      shell.removeEventListener("click", hideForCommandMenu, true);
+      document.removeEventListener("pointerup", finishTextSelection);
+      document.removeEventListener("mouseup", finishTextSelection);
+      document.removeEventListener("pointercancel", cancelTextSelection);
+      window.removeEventListener("resize", refreshPosition);
+      window.removeEventListener("scroll", refreshPosition, true);
+    };
+  }, [shouldMountEditor]);
+
   return (
     <div
       className={`inline-editor-shell ${variant === "root" ? "root-inline-editor-shell" : ""}`}
@@ -320,13 +395,82 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
       {shouldMountEditor && (
         <EditorCommandMenu
           getEditor={() => view.current}
+          onOpenChange={(open) => { if (open) setInlineSelectionAnchor(null); }}
           onPickFiles={pickFiles}
           onRetryFiles={() => insertPaths(failedPaths.current)}
           fileStatus={fileStatus}
         />
       )}
+      <SelectionMenu
+        anchor={inlineSelectionAnchor}
+        ariaLabel="文本选区菜单"
+        className="inline-selection-menu"
+        actions={inlineSelectionActions(view, setInlineSelectionAnchor)}
+      />
     </div>
   );
+}
+
+function inlineSelectionActions(
+  view: MutableRefObject<EditorView | undefined>,
+  setAnchor: (anchor: SelectionMenuAnchor | null) => void,
+) {
+  const run = (command: (target: EditorView) => boolean) => {
+    const editor = view.current;
+    if (!editor || editor.state.selection.main.empty) return;
+    command(editor);
+    editor.focus();
+    setAnchor(null);
+    queueMicrotask(() => {
+      if (view.current) {
+        const range = view.current.state.selection.main;
+        if (!range.empty) setAnchor(selectionAnchorForEditor(view.current));
+      }
+    });
+  };
+  const copy = async () => {
+    const editor = view.current;
+    if (!editor) return false;
+    const range = editor.state.selection.main;
+    if (range.empty) return false;
+    const copied = await writeClipboardText(editor.state.sliceDoc(range.from, range.to));
+    editor.focus();
+    return copied;
+  };
+  const cut = async () => {
+    const editor = view.current;
+    if (!editor) return false;
+    const range = editor.state.selection.main;
+    if (range.empty) return false;
+    if (!await writeClipboardText(editor.state.sliceDoc(range.from, range.to))) return false;
+    editor.dispatch({ changes: { from: range.from, to: range.to, insert: "" }, selection: { anchor: range.from }, userEvent: "delete" });
+    editor.focus();
+    setAnchor(null);
+    return true;
+  };
+  return [
+    { id: "bold", label: "粗体", icon: selectionMenuIcons.bold, onSelect: () => run(toggleBold) },
+    { id: "italic", label: "斜体", icon: selectionMenuIcons.italic, onSelect: () => run(toggleItalic) },
+    { id: "strikethrough", label: "删除线", icon: selectionMenuIcons.strikethrough, onSelect: () => run(toggleStrikethrough) },
+    { id: "highlight", label: "高亮", icon: selectionMenuIcons.highlight, onSelect: () => run(toggleHighlight) },
+    { id: "code", label: "行内代码", icon: selectionMenuIcons.code, onSelect: () => run(toggleInlineCode) },
+    { id: "copy", label: "复制文本", icon: selectionMenuIcons.copy, onSelect: copy, feedback: "已复制", failureFeedback: "复制失败" },
+    { id: "cut", label: "剪切文本", icon: selectionMenuIcons.cut, onSelect: cut, failureFeedback: "剪切失败" },
+  ] as const;
+}
+
+function selectionAnchorForEditor(editor: EditorView): SelectionMenuAnchor | null {
+  const range = editor.state.selection.main;
+  if (range.empty) return null;
+  const from = editor.coordsAtPos(range.from, -1);
+  const to = editor.coordsAtPos(range.to, 1);
+  const fallback = editor.dom.getBoundingClientRect();
+  return {
+    left: Math.min(from?.left ?? fallback.left, to?.left ?? fallback.left),
+    right: Math.max(from?.right ?? fallback.right, to?.right ?? fallback.right),
+    top: Math.min(from?.top ?? fallback.top, to?.top ?? fallback.top),
+    bottom: Math.max(from?.bottom ?? fallback.bottom, to?.bottom ?? fallback.bottom),
+  };
 }
 
 function dropPosition(editor: EditorView, clientX: number, clientY: number): number | null {

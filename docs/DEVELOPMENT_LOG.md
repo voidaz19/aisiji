@@ -1,5 +1,135 @@
 # 开发施工日志
 
+## 2026-07-30：虚节点补齐统一文件插入
+
+### 用户确认与根因
+
+- 用户确认虚节点采用“先选择文件，确认非空后再实体化”的统一方案；取消文件选择不得创建空节点。
+- 根因是 `EditorCommandMenu` 只有同时获得选文件和失败重试能力时才显示“插入文件”，普通 `InlineEditor` 已传入完整能力，`GhostEditor` 只接入了格式/结构命令。
+- 附件记录必须绑定稳定 `nodeId`，因此不能直接把普通节点的回调原样传给尚无身份的虚节点；此前把文件入口设为可选能力只是防止伪造附件归属，并非产品层限制。
+
+### 首版实现与架构复核
+
+- 首版曾新增附件专用 `attachmentInsertionHandoff` 队列，在虚节点实体化后按节点 ID 把文件路径交给真实编辑器。
+- 用户指出项目已有 `editorTarget.ts` 专门统一真实节点与虚节点的处理方式。复核确认首版虽能工作，但通过单独的 `materializeRef` 和附件队列重复承担了虚实交接职责，不符合既有“新增命令统一经过 `EditorTarget`”的结构约束。
+- 用户确认改用低耦合方案：删除附件专用队列；扩展 `EditorTarget` 的通用真实编辑器交接能力；附件层只通过 CodeMirror effect 发出插入请求，保持各模块单一职责。
+
+### 最终施工
+
+- `src/components/editorTarget.ts`：新增 `runWithPersistedEditor`。真实节点直接使用当前 `EditorView`；虚节点只实体化一次，等待替换后的真实编辑器可解析后再执行命令，最终释放临时身份。真实编辑器解析器由调用方注入，因此模块不依赖 DOM 结构、附件或 Store。
+- `src/components/attachmentUploadState.ts`：新增附件插入请求 effect 与监听扩展，只负责在 CodeMirror 编辑器之间传递文件路径，不处理节点实体化。
+- `src/components/GhostEditor.tsx`：接入唯一“插入文件”菜单入口；取消选择保持草稿，确认路径后通过 `runWithPersistedEditor` 实体化并向真实编辑器发送 effect。移除直接实体化引用和附件专用队列依赖。
+- `src/components/InlineEditor.tsx`：监听附件插入 effect 后调用原有 `insertPaths`，继续复用稳定占位、并行保存、选择顺序、Markdown 一次性写入、失败路径和重试流程。
+- 删除首版 `src/components/attachmentInsertionHandoff.ts` 及其测试，不在 Zustand、DOM 查询或全局附件队列中维护瞬时插入任务。
+- `src/components/editorTarget.test.ts`：新增虚节点等待真实编辑器和真实节点直接执行回归；`src/components/GhostEditor.test.tsx` 继续覆盖取消不实体化、只创建一个真实节点以及失败后在真实编辑器重试。
+- `docs/编辑规范.md` 明确虚节点文件插入的实体化时机与交接约束；`docs/PROJECT_INDEX.md` 已改为索引 `EditorTarget` 与 CodeMirror effect 方案。目录职责未变化。
+
+### 验证
+
+- 重构后定向测试通过：4 个测试文件/47 条测试，覆盖 `EditorTarget` 虚实分流、虚节点文件选择、普通节点附件事务和 Markdown 插入规划。
+- 完整 `npm run check` 通过：模块边界、39 个测试文件/317 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仅提示既有 editor chunk 超过 500 kB。
+- 生产构建由首版 3668 个模块降为 3667 个模块，确认附件专用交接模块已移除。
+- README 暂不更新，等待用户实际验收虚节点文件选择、取消和失败重试后再同步使用者说明。
+
+## 2026-07-30：补齐节点与行内文本选区菜单
+
+### 用户反馈
+
+- 当前只有节点末端的行内 `+` 菜单，节点选区和行内文本选区没有就地操作入口。
+
+### 本轮施工
+
+- 新增 `src/components/SelectionMenu.tsx`：提供通过 Portal 定位的紧凑浮动工具栏，支持视口边缘收缩和上下翻转，图标按钮保留可访问名称。
+- `src/components/InlineEditor.tsx`：监听 CodeMirror 非空选区并显示文本选区菜单，复用现有粗体、斜体、删除线、高亮、行内代码命令，并提供复制/剪切；打开 `+` 命令菜单时自动互斥隐藏。
+- `src/features/notebook/hooks/useNodeRangeSelection.ts`：暴露节点选区复制、剪切、删除、批量缩进和提升动作，菜单与键盘路径共用删除回退和领域命令。
+- `src/features/notebook/NotebookPanel.tsx`：按选中节点根行的整体矩形定位节点选区菜单，提供复制、剪切、缩进、提升和删除。
+- `src/App.css`：增加统一浮动工具栏和图标按钮样式；未改变正文选区、节点选区和键盘焦点视觉规则。
+- `src/components/SelectionMenu.test.tsx`、`src/components/InlineEditor.test.tsx`、`src/features/notebook/NotebookPanel.test.tsx`：覆盖菜单定位、文本选区菜单出现、节点选区菜单出现以及与原有 `+` 菜单互斥。
+
+### 约束与后续
+
+- 不新增 Store 数据、领域命令或同步字段；选区菜单只编排现有编辑和节点操作。
+- README 暂不更新，等待用户实际验收后按项目约定同步面向使用者的能力说明。
+
+### 拖选显示时序续修
+
+- 用户实测要求菜单只在拖动结束后显示，不能在节点或文字仍处于拖选过程中提前遮挡内容。
+- `useNodeRangeSelection` 增加仅在 `pointerup` 后成立的菜单提交状态；节点范围预览继续实时高亮，但菜单锚点暂不生成。`Ctrl/Cmd+点击`和键盘形成的非拖动选区仍可立即显示。
+- `InlineEditor` 在编辑器 `mousedown` 后暂停文本菜单同步，由全局 `mouseup`/`pointerup` 等待 CodeMirror 完成最终选区后再定位；取消拖动时清理待显示状态。
+- 回归测试同时断言节点和文本菜单在拖动中不存在、松开后出现。
+
+### 默认方位与节点对齐续修
+
+- 用户要求选区菜单默认显示在对象上方，并让节点菜单从选中对象左边缘开始，而不是按整体选区居中。
+- `SelectionMenu` 的通用默认方位改为上方；顶部空间不足时翻到下方，两侧继续执行视口收边。
+- 通用菜单增加 `start` 水平对齐选项；行内文本菜单保持居中，`NotebookPanel` 的节点菜单显式使用左对齐。
+- 定位回归覆盖默认上方、顶部空间不足向下翻转，以及节点菜单左边缘对齐。
+
+### 节点菜单动作与操作反馈续修
+
+- 用户实测发现复制没有视觉提示，节点复制/剪切没有可观察效果，缩进和删除按钮也不执行。
+- 根因是 Portal 只改变菜单 DOM 挂载位置，React 事件仍沿组件树传播；节点选区捕获器先把菜单按钮当作普通控件清空选区，提交后的点击抑制又会拦截菜单 `click`，导致动作回调在执行前随菜单卸载。
+- `SelectionMenu` 增加专属事件所有权标记；`useNodeRangeSelection` 对菜单的 `pointerdown` 和 `click` 均保留选区，不再进入画布清理与点击抑制路径。
+- 新增 `src/platform/clipboard.ts`，优先使用 Clipboard API，并为 WebView 提供 `execCommand("copy")` 回退。节点复制导出带相对层级缩进的纯文本；剪切仅在复制成功后删除选中内容子树。
+- 复制成功显示勾选和“已复制”，失败显示“复制失败”；缩进/提升不显示操作提示，不可执行时不渲染对应按钮；两个层级动作同时可用时按“提升、缩进”排列。
+- 回归通过真实菜单按钮的 `pointerdown + click` 覆盖复制、剪切、缩进和删除，防止只测 Hook/快捷键而遗漏 Portal 事件链。
+- 按用户对通用图标语义的复核，将缩进/提升从容易被理解为上下移动的 `ArrowDownToLine` / `ArrowUpFromLine` 改为标准列表层级图标 `ListIndentIncrease` / `ListIndentDecrease`，并增加图标回归断言。
+- 修复缩进/提升后的菜单锚点：左对齐改为节点圆点/正文对象的实际左边缘，并在 100ms 树布局动画期间逐帧重新测量，避免菜单停在操作前的层级位置；窗口滚动和尺寸变化时也同步更新。
+- 用户实测发现进入含附件的笔记后首次缩进会让页面抖动，无附件笔记不复现。根因是图片、文本和媒体附件预览在编辑器挂载后仍会异步改变树行高度，而 FLIP Hook 只在节点结构变化时记录基线；第一次缩进因此把附件加载造成的旧纵坐标差也当成节点移动。`useTreeLayoutAnimation` 现通过 `ResizeObserver` 在无结构动画时刷新稳定行位，并在动画完成后再捕获最终布局；回归锁定附件行高变化后的首次缩进只产生横向层级位移。
+
+### 当前验证
+
+- 定向测试通过：`SelectionMenu`、`InlineEditor`、`NotebookPanel` 共 87 条测试。
+- 附件尺寸基线定向回归与 `NotebookPanel` 测试通过：2 个测试文件/53 条测试。
+- 全量 `npm run check` 通过：模块边界、39 个测试文件/312 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仅提示既有 editor chunk 超过 500 kB。
+- 浏览器预览实测：节点菜单左边缘与节点圆点均为 `368px`，菜单位于节点上方；标准缩进/提升图标正确。随后按用户反馈将不可操作的层级按钮从禁用态调整为直接移除。
+- 用户确认本轮功能有效无误；按项目约定更新 `README.md`，记录文本/节点选区浮动菜单、节点复制剪切与按能力显示的层级操作，以及附件异步预览下的布局稳定性。
+
+## 2026-07-30：Tana 风格多选节点缩进
+
+### 用户确认的真实规则
+
+- 多选可以不连续；选中父节点会连带选中整棵子树。
+- 每个选中根节点寻找当前同级中最近的未选中前置节点作为父节点；连续选中的同级节点共享同一个前置节点。
+- 没有可用前置节点的项跳过，其他可执行项继续移动；节点及其子树追加到目标父节点已有子节点之后。
+- 移动后保持选中状态。
+
+### 本轮施工范围
+
+- 新增纯领域批量缩进规则与测试。
+- 多选状态下按 `Tab` 执行批量缩进，保留现有选区。
+- 暂不实现取消缩进、工具栏按钮或新的选择模型。
+
+### 实现
+
+- `src/domain/commands/moveNode.ts` 新增纯领域批量缩进命令：基于操作前的同级关系一次性规划目标，再按可见树顺序移动选区根，避免连续选中项互相嵌套。
+- `src/store/useNotebookStore.ts` 将整批结构变化作为一条 `indent_nodes` 操作记录持久化；载荷只记录实际移动的根节点。
+- `src/features/notebook/hooks/useNodeRangeSelection.ts` 在节点选区状态接管无修饰键 `Tab`，操作后不清除选区；单节点编辑器原有 `Tab` 行为保持不变。
+- `docs/DOMAIN_RULES.md`、`docs/编辑规范.md` 与 `docs/PROJECT_INDEX.md` 已同步业务规则、交互规范和实现/回归索引；目录结构未变化。
+
+### 验证
+
+- 定向测试通过：2 个测试文件/61 条测试，覆盖连续与不连续根、部分跳过、父子去重、已有子节点追加，以及界面 `Tab` 后选区保留。
+- 完整 `npm run check` 通过：模块边界、37 个测试文件/293 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仅提示既有 editor chunk 超过 500 kB。
+- `git diff --check` 通过；仅有仓库既有的 Windows CRLF 转换提示。
+- 首轮 README 暂缓更新，等待用户实际验收完整交互。
+
+### 首轮实测反馈与续修
+
+- 用户实测发现 `Ctrl` 多选无效：现有选择状态只能表达一个连续范围，尚未接入修饰键点击形成离散选区。
+- 用户实测发现多选状态按 `Shift+Tab` 无反应：首轮只实现批量缩进，选区键盘处理器随后拦截了未实现的提升按键。
+- 续修将选择状态升级为可同时表达离散节点和活动范围，并补齐批量提升领域命令；缩进、提升后均保留选区。
+
+### 续修实现与验证
+
+- `src/features/notebook/hooks/useNodeRangeSelection.ts`：加入 `Ctrl/Cmd+点击` 的离散节点切换；连续拖拽仍使用范围选择，离散项与活动项统一展开为子树后参与操作。
+- `src/domain/commands/moveNode.ts`：新增批量提升命令，按原顺序把可提升的选中根放到原父节点之后；当前页面根边界项单独跳过。
+- `src/store/useNotebookStore.ts`：新增 `outdentNodes` 与 `outdent_nodes` 操作日志；`Shift+Tab` 接入选区批量提升。
+- 回归测试新增：离散选区增删、离散选区缩进、多选 `Shift+Tab` 提升、父子去重和部分边界成功。
+- 定向测试通过：2 个测试文件/66 条测试。完整 `npm run check` 通过：模块边界、37 个测试文件/298 条测试、TypeScript/生产构建、Rust 格式和 Rust 编译均正常；Vite 仍仅提示既有 editor chunk 超过 500 kB。
+- 用户实际验收通过：`Ctrl` 离散多选、选区 `Tab` 缩进和 `Shift+Tab` 提升均符合预期。
+- 按项目约定同步更新 `README.md` 当前能力，记录连续/离散选择和批量层级操作。
+
 ## 2026-07-29：虚节点统一编辑目标适配
 
 ### 用户确认

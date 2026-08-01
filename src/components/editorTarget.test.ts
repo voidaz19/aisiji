@@ -1,13 +1,20 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ensureEditorNodeId, runWithEditorNode, type EditorTarget } from "./editorTarget";
+import {
+  ensureEditorNodeId,
+  runWithEditorNode,
+  runWithPersistedEditor,
+  type EditorTarget,
+} from "./editorTarget";
 
 describe("editor target", () => {
   let view: EditorView | undefined;
+  let persistedView: EditorView | undefined;
 
   afterEach(() => {
     view?.destroy();
+    persistedView?.destroy();
     vi.restoreAllMocks();
   });
 
@@ -77,5 +84,50 @@ describe("editor target", () => {
     };
 
     expect(runWithEditorNode(target, view, (nodeId) => nodeId === "node-2")).toBe(true);
+  });
+
+  it("resolves the persisted editor after a draft handoff", async () => {
+    const draftHost = document.createElement("div");
+    const persistedHost = document.createElement("div");
+    document.body.append(draftHost, persistedHost);
+    view = new EditorView({ state: EditorState.create({ doc: "" }), parent: draftHost });
+    persistedView = new EditorView({ state: EditorState.create({ doc: "" }), parent: persistedHost });
+    const target: EditorTarget = {
+      kind: "draft",
+      nodeId: null,
+      parentId: "parent-1",
+      materialize: () => "node-3",
+    };
+    const resolveEditor = vi.fn(() => persistedView ?? null);
+    const command = vi.fn(() => true);
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      queueMicrotask(() => callback(0));
+      return 1;
+    });
+
+    await expect(runWithPersistedEditor(target, view, resolveEditor, command)).resolves.toBe(true);
+
+    expect(resolveEditor).toHaveBeenCalledWith("node-3");
+    expect(command).toHaveBeenCalledWith("node-3", persistedView);
+    expect(target.nodeId).toBeNull();
+  });
+
+  it("runs editor-backed commands directly for persisted targets", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    view = new EditorView({ state: EditorState.create({ doc: "content" }), parent: host });
+    const target: EditorTarget = {
+      kind: "node",
+      nodeId: "node-4",
+      parentId: "parent-1",
+      materialize: () => null,
+    };
+    const resolveEditor = vi.fn(() => null);
+    const command = vi.fn(() => true);
+
+    await expect(runWithPersistedEditor(target, view, resolveEditor, command)).resolves.toBe(true);
+
+    expect(resolveEditor).not.toHaveBeenCalled();
+    expect(command).toHaveBeenCalledWith("node-4", view);
   });
 });
