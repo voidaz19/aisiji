@@ -58,6 +58,14 @@ npm run build
 cargo check --config 'source.crates-io.replace-with="rsproxy"' --config 'source.rsproxy.registry="sparse+https://rsproxy.cn/index/"'
 ```
 
+性能回归使用固定的 1k/10k 工作区与 100KB Markdown 夹具，覆盖输入分段、Long Task、虚拟化 DOM、节点切换和拖拽：
+
+```powershell
+npm run test:perf
+```
+
+当前性能红线与重大重做边界见 [性能测试规范](docs/PERFORMANCE.md) 和 [2026-08-02 性能架构审查](docs/PERFORMANCE_AUDIT_2026-08-02.md)。性能测试失败表示已记录的问题仍存在，不应通过放宽预算隐藏。
+
 Windows release 二进制输出在 `src-tauri/target/release/tauri-app.exe`。
 
 ## Android 环境

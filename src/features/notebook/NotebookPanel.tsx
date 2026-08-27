@@ -24,6 +24,7 @@ import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
 import { dateLabel } from "../../shared/date";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP } from "../../shared/treeLayout";
+import { markAppPerformance } from "../../shared/performanceProbe";
 import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { useHierarchyGuides } from "./hooks/useHierarchyGuides";
@@ -62,6 +63,7 @@ type DropDebugLayout = {
 const VIRTUALIZATION_THRESHOLD = 200;
 
 export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDebug = false, isVisible = true }: Props) {
+  markAppPerformance("notebook:render");
   const nodes = useNotebookStore((state) => state.nodes);
   const fields = useNotebookStore((state) => state.fields);
   const collapsed = useNotebookStore((state) => state.collapsed);
@@ -97,12 +99,16 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   const draggingRef = useRef(false);
   const treeListRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
-  const renderedRows = useMemo(() => treeLayoutRows(
-    visibleNodes,
-    { nodes, collapsed },
-    ghostSuppressed,
-    view === "today" || view === "outline" ? rootId : null,
-  ), [collapsed, ghostSuppressed, nodes, rootId, view, visibleNodes]);
+  const renderedRows = useMemo(() => {
+    markAppPerformance("notebook:topology-compute");
+    return treeLayoutRows(
+      visibleNodes,
+      { nodes, collapsed },
+      ghostSuppressed,
+      view === "today" || view === "outline" ? rootId : null,
+    );
+  }, [collapsed, ghostSuppressed, nodes, rootId, view, visibleNodes]);
+  useLayoutEffect(() => { markAppPerformance("notebook:commit"); });
   const logicalSelectionEntries = useMemo(
     () => renderedRows.map((row) => ({ key: row.key, depth: row.depth })),
     [renderedRows],

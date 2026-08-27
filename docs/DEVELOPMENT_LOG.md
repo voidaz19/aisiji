@@ -1153,3 +1153,61 @@
 - `AGENTS.md`、`docs/PERSISTENCE_SPEC.md` 与 `docs/ARCHITECTURE.md` 已统一此规则，避免后续实现重新引入兼容分支；正式发布后的升级策略不属于本轮 SPEC，届时另行设计。
 - `docs/PROJECT_INDEX.md` 已同步“不读取旧数据”的 SPEC 定位；文档施工后 `git diff --check` 通过，历史日志中的旧迁移提案作为被后续决策推翻的过程记录保留，不代表当前方案。
 - 架构实施前按用户要求建立干净 Git 基线；提交前 `npm run check` 通过模块边界、性能源码类型、39 个测试文件/317 条测试、生产构建、Rust 格式和 Rust 编译，仍只有既有 editor chunk 体积提示。
+
+## 2026-08-02：App 性能路线独立审查
+
+### 审查范围
+
+- 用户要求不预设现有方案正确，审视 App 中应简化、优化或推翻重做的性能路径；本轮只做只读诊断、自动化采样和文档结论，不修改业务代码。
+- 修改前 `git status --short` 为空；本轮性能命令生成的 `performance-results/` 与 `dist/` 均为既有忽略项。
+
+### 动态证据
+
+- `npm run test:perf:domain` 通过 4 项；10k 可见树 P95 为 18.80ms，虽低于现有 50ms 预算，但已经超过 16.7ms 单帧时间。
+- 完整浏览器回归在 100KB Markdown 场景失败：输入 P95 362.30ms，超过 200ms 预算；由于 Playwright serial 模式，后续 3 项被跳过。
+- 独立运行组合场景：输入 P95 144.60ms，全量持久化 P95 25.20ms、占比 P95 21.95%；100 次输入产生 59 个 Long Task，累计 3504ms。
+- 独立运行节点切换与 40 节点拖拽均通过；拖拽完成 404.90ms、慢帧比 0。该小夹具不能覆盖源码中拖拽开始后关闭虚拟化的 10k 行退化。
+- 生产构建成功；editor chunk 525.84kB（gzip 182.28kB），保留既有大 chunk 警告。
+
+### 架构结论
+
+- 当前输入把局部字符编辑扩散为完整实体字典克隆、全节点 revision 扫描、完整工作区同步序列化/写入、全局 Zustand 订阅失效、可见树/布局行/布局签名重算和 Markdown 全语法树装饰重建。
+- 现有增量持久化 SPEC 的 SQLite/IndexedDB 实体化方向保留，但单独实施只能消除当前已测约 22% 的持久化成本；实施前必须把 ChangeSet 扩展为内存局部更新、派生索引和视图失效的共同协议。
+- 保留 React、Zustand、CodeMirror、TanStack Virtual 和 SQLite/IndexedDB 基础选型；推翻重做 Store 提交/订阅边界、Markdown Live Preview 全文重建策略和拖拽关闭虚拟化的契约。
+- 新增 `docs/PERFORMANCE_AUDIT_2026-08-02.md`，记录证据、分级裁决、测试缺口和建议施工顺序；`docs/PROJECT_INDEX.md` 已加入审查文档与回归入口索引。
+- README 暂不更新；本轮是审查结论，需用户确认结论有效并授权重大施工后再进入实现。
+
+### 验证
+
+- 文档外未修改源码；未运行与文档变更无关的完整 `npm run check`。
+- 端口 4273 已确认空闲，没有遗留性能预览服务。
+
+## 2026-08-02：性能施工第一阶段——完整观测与结构红线
+
+### 确认边界
+
+- 用户接受性能架构审查与建议施工顺序，授权先实施性能测试编排和观测；本阶段不修改 Store、Live Preview、持久化或拖拽业务算法。
+- 按用户确认同步更新 README 的性能回归入口与当前红线说明。
+
+### 测试基础设施
+
+- `src/shared/performanceProbe.ts` 新增可选运行时探针；未安装探针时只做空值判断，不留生产样本。AppShell、NotebookPanel、树拓扑 useMemo、树行和 InlineEditor 输入提交记录时间戳或执行次数。
+- 组合压力测试分开记录按键到 CodeMirror 提交、Store 同步提交、React/Notebook 提交的 P95，并统计 AppShell、NotebookPanel、拓扑计算和树行渲染次数。
+- 性能套件不再使用 Playwright serial 失败跳过语义。所有场景先记录指标，最后由独立预算报告测试统一列出全部超限项；`afterAll` 在预算失败前写出完整 `browser.json`。
+- 新增 1k/10k 大纲拖拽中 DOM 行数硬预算 100；测试在按住指针期间采样，`finally` 保证释放指针。
+
+### 新基线
+
+- 完整 Chromium 套件执行全部 8 个场景后统一报告 3 项红线：组合输入 Long Task `63/100`；1k 拖拽挂载 `1001` 行；10k 拖拽挂载 `10001` 行。
+- 10k 拖拽从按下到预览可见约 18.29s，直接证明“拖拽时关闭虚拟化”不可接受；1k 对应约 1.70s。
+- 100 次组合输入完整取得 100 份分段样本：CodeMirror 提交 P95 20.40ms、Store 同步提交 28.70ms、React/Notebook 提交 10.90ms。
+- 同一轮输入产生 AppShell 渲染 100 次、NotebookPanel 渲染 100 次、树拓扑计算 100 次；树行 render 为 0，说明 memo 保护了行组件，但没有阻止父级全局重算。
+- 全量工作区持久化 P95 24.00ms，占输入 P95 20.99%；该结果再次证明持久化是重要组成但不是全部输入成本。
+
+### 验证
+
+- `npm run check:perf-types`：通过。
+- `npm run check:boundaries`：通过。
+- 相关 Vitest：3 个文件、83 条测试全部通过。
+- `npm run test:perf:browser`：生产构建成功，8 个场景全部执行；最终按预期因上述 3 项已知性能红线失败并生成完整 JSON。
+- 性能预览端口 4273 已释放；README、性能规范和项目索引已同步。

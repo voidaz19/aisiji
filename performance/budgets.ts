@@ -37,6 +37,7 @@ export const browserBudgets = {
   nodeSwitchHeapGrowth: { unit: "bytes", maximum: 10 * 1024 * 1024 },
   dragComplete: { unit: "ms", maximum: 1_000 },
   dragSlowFrameRatio: { unit: "ratio", maximum: 0.3 },
+  dragVirtualizedDomRows: { unit: "count", maximum: 100, scalable: false },
 } satisfies Record<string, PerformanceBudget>;
 
 export function scaledMaximum(budget: PerformanceBudget): number {

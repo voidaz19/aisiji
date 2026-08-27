@@ -7,7 +7,7 @@
 | 层级 | 实现 | 覆盖范围 |
 | --- | --- | --- |
 | 纯逻辑基准 | `performance/domain.perf.test.ts`、专用 Vitest 配置 | 1k/10k 可见树、10k 搜索、1k 布局行计算 |
-| Chromium 交互 | `performance/browser.perf.spec.ts`、Playwright | 生产构建启动、10k 大纲、1k 展开、100KB Markdown、10k+100KB 组合输入、节点切换、拖拽、长任务、帧间隔、DOM 数量和 JS 堆增长 |
+| Chromium 交互 | `performance/browser.perf.spec.ts`、Playwright | 生产构建启动、10k 大纲、1k 展开、100KB Markdown、10k+100KB 组合输入、节点切换、40/1k/10k 拖拽、输入分段、重渲染/拓扑计数、长任务、帧间隔、DOM 数量和 JS 堆增长 |
 | Tauri 原生 | 尚未接入 | WebView2、SQLite 和原生附件链路；同步或移动端施工前另行设计，不用浏览器结果冒充原生结果 |
 
 固定工作区由 `performance/fixtures.ts` 确定性生成，不读取开发者的真实工作区，也不依赖手工录入。
@@ -41,9 +41,11 @@ npm run test:perf:browser
 - 纯逻辑操作先预热 5 次，再采样 20 次，预算判断使用 P95。
 - Markdown 输入采样 15 次并使用 P95，避免单次自动化调度噪声决定结果。
 - 组合压力场景在 10k 节点工作区的 UTF-8 100KB 文档中连续输入 100 次；除总输入 P95 外，分别记录全量工作区 `JSON.stringify`、`localStorage.setItem`、同步持久化合计耗时、调用次数和持久化占总输入时间的 P95 比例。Long Task 以单次 P95 与出现次数作为回归门槛，累计时长只作诊断，避免用易受采样次数影响的总和误判。
+- 组合输入同时记录从按键到 CodeMirror 提交、Store 同步提交、React/Notebook 提交的分段 P95，以及 AppShell、NotebookPanel、树拓扑和树行的执行次数。探针没有安装时不保留样本。
 - 浏览器交互等待两帧确认 React/CodeMirror 已提交，再记录操作耗时。
 - `PerformanceObserver` 汇总主线程长任务；`requestAnimationFrame` 统计超过 34ms 的慢帧比例。
 - 大树展开同时限制实际挂载的 DOM 行数，防止性能耗时暂时正常但虚拟化已失效。
+- 1k/10k 拖拽在按住指针期间继续检查 DOM 行数上限，禁止通过关闭虚拟化获得拖拽布局。
 - 节点切换前后主动回收 Chromium JS 堆，再判断保留内存增长。
 - 预算集中定义在 `performance/budgets.ts`，不得在测试用例中散落临时阈值。
 
@@ -70,10 +72,12 @@ performance-results/
 
 JSON 包含指标值、预算、通过状态、Node/系统/CPU 和预算缩放系数。该目录属于本机产物，不提交 Git；需要长期比较时由 CI 作为 artifact 保存。
 
+浏览器套件会先运行所有可执行场景并写出完整 JSON，最后统一报告超预算指标。一个已知性能红线不会再自动跳过其后的节点切换或拖拽场景。
+
 新增性能场景时必须同时完成：固定夹具、预热或稳定等待、机器可读指标、预算、失败断言、项目索引和开发日志。若场景受网络、真实文件或系统动画影响，先隔离这些变量，不能用单次墙钟计时作为门槛。
 
 ## 当前已知性能红线
 
-截至 2026-08-01，“10k 节点 + UTF-8 100KB Markdown + 100 次输入”组合场景按预期失败：Long Task 数为 48～78，超过最多 30 的预算。完整工作区约 2.38MB，每次输入仍发生一次全量序列化和一次同步 localStorage 写入。
+截至 2026-08-02，单节点 UTF-8 100KB Markdown 输入 P95 曾达到 362.30ms；“10k 节点 + UTF-8 100KB Markdown + 100 次输入”组合场景记录到 59 个 Long Task，超过最多 30 的预算。完整工作区约 2.38MB，每次输入仍发生一次全量序列化和一次同步 localStorage 写入。
 
-该失败用于驱动 `docs/PERSISTENCE_SPEC.md` 的增量持久化架构，不得通过放宽 Long Task 数量预算消除。实现完成后应保留同一夹具证明问题被解决。
+源码审查还确认拖拽时会关闭虚拟化；1k/10k 拖拽 DOM 上限测试用于锁定该结构性红线。这些失败共同驱动 `docs/PERFORMANCE_AUDIT_2026-08-02.md` 中的 Live Preview、Store 失效边界、拖拽虚拟化和增量持久化施工，不得通过放宽预算消除。

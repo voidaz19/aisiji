@@ -4,6 +4,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { newId, ROOT_ID, type AttachmentRecord } from "../domain/model";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { markAppPerformance } from "../shared/performanceProbe";
 import { planAttachmentInsertion } from "./attachmentInsertion";
 import {
   attachmentInsertionRequestExtension,
@@ -217,7 +218,11 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
           indentWithTab,
         ]),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && !syncingValue.current) editMarkdown(nodeId, update.state.doc.toString());
+          if (update.docChanged && !syncingValue.current) {
+            markAppPerformance("markdown:codemirror-commit");
+            editMarkdown(nodeId, update.state.doc.toString());
+            markAppPerformance("markdown:store-commit");
+          }
           if (update.selectionSet || update.focusChanged || update.docChanged) selectionMenuSync.current(update.view);
         }),
         EditorView.domEventHandlers({

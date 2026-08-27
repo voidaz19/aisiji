@@ -9,6 +9,7 @@ import {
   visibleNodesForView,
 } from "../features/notebook/model/notebookView";
 import { localDateKey } from "../shared/date";
+import { markAppPerformance } from "../shared/performanceProbe";
 import { isNotebookView, type WorkspaceView } from "../shared/workspaceView";
 import { flushWorkspacePersistence } from "../platform/workspaceRepository";
 import { useNotebookStore } from "../store/useNotebookStore";
@@ -67,6 +68,7 @@ function prepareView(view: WorkspaceView): Promise<unknown> {
   return Promise.resolve();
 }
 export function AppShell() {
+  markAppPerformance("app-shell:render");
   const nodes = useNotebookStore((state) => state.nodes);
   const collapsed = useNotebookStore((state) => state.collapsed);
   const query = useNotebookStore((state) => state.query);
@@ -94,6 +96,7 @@ export function AppShell() {
   );
 
   useEffect(() => { void hydrate(); }, [hydrate]);
+  useLayoutEffect(() => { markAppPerformance("app-shell:commit"); });
   useEffect(() => {
     const flushWhenHidden = () => {
       if (document.visibilityState === "hidden") flushWorkspacePersistence();

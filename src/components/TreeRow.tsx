@@ -4,6 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ChevronDown, ChevronRight, Circle } from "lucide-react";
 import { useNotebookStore } from "../store/useNotebookStore";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP, type TreeLayoutGap } from "../shared/treeLayout";
+import { markAppPerformance } from "../shared/performanceProbe";
 import { GhostEditor } from "./GhostEditor";
 import { InlineEditor } from "./InlineEditor";
 import type { TreeBlock } from "./treeBlock";
@@ -31,6 +32,7 @@ type SortableBehavior = Pick<
 >;
 
 export const TreeBlockRow = memo(function TreeBlockRow(props: Props) {
+  markAppPerformance("tree-row:render");
   if (props.block.kind === "placeholder") {
     return <TreeBlockFrame {...props} />;
   }
