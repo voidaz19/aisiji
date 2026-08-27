@@ -114,7 +114,10 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     [renderedRows],
   );
   const nodeSelection = useNodeRangeSelection(contentAreaRef, logicalSelectionEntries);
-  const virtualized = renderedRows.length >= VIRTUALIZATION_THRESHOLD && dragId === null;
+  // Keep the virtualizer active while dragging. Unmounted rows use the
+  // virtualizer's logical measurements for drop-slot geometry, so drag start
+  // never turns a 10k-node tree into 10k DOM rows.
+  const virtualized = renderedRows.length >= VIRTUALIZATION_THRESHOLD;
   const rowVirtualizer = useVirtualizer({
     count: renderedRows.length,
     getScrollElement: () => contentAreaRef.current,
@@ -328,38 +331,49 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     const anchorsByDepth = new Map<number, number>();
     const blockLeftsByDepth = new Map<number, number>();
     const blocksByKey = new Map(renderedRows.map((block) => [block.key, block]));
+    const mountedRows = new Map(Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]")).flatMap((row) => {
+      const key = row.dataset.treeBlockKey;
+      return key ? [[key, row] as const] : [];
+    }));
+    const measurements = rowVirtualizer.measurementsCache;
     const state = useNotebookStore.getState();
     const emptyZones: EmptyDropHitZone[] = [];
-    for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
-      const blockKey = row.dataset.treeBlockKey;
-      if (!blockKey) continue;
+    for (let index = 0; index < renderedRows.length; index += 1) {
+      const block = renderedRows[index];
+      const row = mountedRows.get(block.key);
+      const measurement = measurements[index];
       // Layout offsets ignore the temporary drag transform, so gaps remain
       // anchored to the stationary tree while the preview follows the pointer.
-      const top = row.offsetTop;
-      const objectLeft = Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0;
+      const top = row?.offsetTop ?? measurement?.start ?? index * 31;
+      const height = row?.offsetHeight ?? measurement?.size ?? 31;
+      const objectLeft = row
+        ? Number.parseFloat(row.style.getPropertyValue("--tree-object-left")) || 0
+        : TREE_ROW_LEFT_PADDING + TREE_COLLAPSE_WIDTH + block.depth * TREE_LEVEL_INDENT;
+      const rowLeft = row?.offsetLeft ?? 0;
       const rect = {
         top,
-        bottom: top + row.offsetHeight,
-        left: row.offsetLeft + objectLeft,
-        right: Math.max(row.offsetLeft + objectLeft, container.scrollWidth - 8),
+        bottom: top + height,
+        left: rowLeft + objectLeft,
+        right: Math.max(rowLeft + objectLeft, container.scrollWidth - 8),
       };
-      blockRects.set(blockKey, rect);
-      const depth = Number(row.dataset.depth ?? 0);
+      blockRects.set(block.key, rect);
+      const depth = block.depth;
       if (!blockLeftsByDepth.has(depth)) {
         blockLeftsByDepth.set(depth, rect.left);
       }
-      const bullet = row.querySelector<HTMLElement>(".node-bullet");
-      if (!anchorsByDepth.has(depth) && bullet) {
-        anchorsByDepth.set(depth, row.offsetLeft + bullet.offsetLeft + bullet.offsetWidth / 2);
+      const bullet = row?.querySelector<HTMLElement>(".node-bullet");
+      if (!anchorsByDepth.has(depth)) {
+        anchorsByDepth.set(depth, bullet
+          ? rowLeft + bullet.offsetLeft + bullet.offsetWidth / 2
+          : rowLeft + TREE_ROW_LEFT_PADDING + depth * TREE_LEVEL_INDENT + TREE_COLLAPSE_WIDTH / 2);
       }
-      const block = blocksByKey.get(blockKey);
       if (block?.emptyTarget && canDropOnEmptyNode(state, movingNodeId, block.emptyTarget)) {
         emptyZones.push({
           blockKey: block.key,
           target: block.emptyTarget,
           top,
-          bottom: top + row.offsetHeight,
-          left: row.offsetLeft + objectLeft,
+          bottom: top + height,
+          left: rowLeft + objectLeft,
           right: container.scrollWidth - 8,
         });
       }

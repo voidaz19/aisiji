@@ -32,8 +32,11 @@ export function useNodeRangeSelection(
   const activeRootId = useNotebookStore((state) => state.activeRootId);
 
   const entries = logicalEntries ?? selectionEntries(containerRef.current);
-  const order = entries.map((entry) => entry.key);
-  const entrySignature = entries.map((entry) => entry.key + ":" + entry.depth).join("\u0000");
+  const order = useMemo(() => entries.map((entry) => entry.key), [entries]);
+  const entrySignature = useMemo(
+    () => entries.map((entry) => entry.key + ":" + entry.depth).join("\u0000"),
+    [entries],
+  );
   const explicitKeys = useMemo(
     () => {
       const selected = new Set(selection ? keysInRange(order, selection) : []);
@@ -166,8 +169,10 @@ export function useNodeRangeSelection(
       event.currentTarget.setPointerCapture?.(event.pointerId);
     }
     event.preventDefault();
-    setSelection({ anchorKey: currentDrag.anchorKey, headKey });
-    setAdditionalKeys([]);
+    setSelection((previous) => previous?.anchorKey === currentDrag.anchorKey && previous.headKey === headKey
+      ? previous
+      : { anchorKey: currentDrag.anchorKey, headKey });
+    setAdditionalKeys((previous) => previous.length ? [] : previous);
     setSelectionMenuReady(false);
   }, [containerRef]);
 

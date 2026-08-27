@@ -65,7 +65,7 @@ src-tauri/src/
 | 最近编辑页面上下文与聚合 | src/domain/recentPages.ts、src/store/useNotebookStore.ts、src/features/dashboard/DashboardPanel.tsx | src/domain/recentPages.test.ts、src/features/dashboard/DashboardPanel.test.tsx、src/store/useNotebookStore.test.ts |
 | 树块空白坐标命中 | src/components/treeHitTesting.ts | src/components/treeHitTesting.test.ts |
 | 页面级连续可编辑画布落点 | src/features/notebook/NotebookPanel.tsx、src/App.css | src/features/notebook/NotebookPanel.test.tsx |
-| 大列表窗口化和交互兼容 | src/features/notebook/NotebookPanel.tsx | src/features/notebook/NotebookPanel.test.tsx |
+| 大列表窗口化、拖拽逻辑测量和交互兼容 | src/features/notebook/NotebookPanel.tsx、src/features/notebook/hooks/useNodeRangeSelection.ts | src/features/notebook/NotebookPanel.test.tsx、performance/browser.perf.spec.ts |
 | 自动化性能基线、输入/Live Preview 分段探针与回归预算 | performance/fixtures.ts、performance/budgets.ts、performance/metrics.ts、src/shared/performanceProbe.ts、playwright.performance.config.ts、vitest.performance.config.ts | performance/domain.perf.test.ts、performance/browser.perf.spec.ts、docs/PERFORMANCE.md、`npm run test:perf` |
 | 性能架构审查与重做边界 | docs/PERFORMANCE_AUDIT_2026-08-02.md | 重大性能施工前按审查顺序补齐分项基线并重新确认 |
 | 增量持久化目标架构 | docs/PERSISTENCE_SPEC.md、docs/ARCHITECTURE.md | 实施前冻结待确认决策；实施后由 Repository 合同、schema 重建与性能测试接替 |
