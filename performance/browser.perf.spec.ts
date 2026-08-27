@@ -14,7 +14,7 @@ interface PerformanceHarness {
     stringifyDurations: number[];
     storageWriteDurations: number[];
   };
-  appMarks: Array<{ name: AppPerformanceProbeName; timestamp: number }>;
+  appMarks: Array<{ name: AppPerformanceProbeName; timestamp: number; value?: number }>;
   clearLongTasks: () => void;
   clearPersistenceMetrics: () => void;
   clearAppMarks: () => void;
@@ -73,15 +73,72 @@ test("keeps 100KB Markdown input latency within budget", async ({ page }) => {
   await page.keyboard.press("Control+End");
   await clearLongTasks(page);
   const samples: number[] = [];
+  const previewBuildSamples: number[] = [];
+  const previewScanSamples: number[] = [];
   for (let index = 0; index < 15; index += 1) {
+    await clearAppMarks(page);
     const startedAt = await page.evaluate(() => performance.now());
     await page.keyboard.type("x");
     await settle(page);
     samples.push(await page.evaluate((start) => performance.now() - start, startedAt));
+    const marks = await appMarks(page);
+    previewBuildSamples.push(...pairedMarkDurations(
+      marks,
+      "markdown:preview-visible-build-start",
+      "markdown:preview-visible-build-end",
+    ));
+    previewScanSamples.push(...markValues(marks, "markdown:preview-visible-build-start"));
   }
   const summary = summarize(samples);
   recordMetric("markdownInputP95", summary.p95, browserBudgets.markdownInputP95);
   recordMetric("markdownInputLongTasks", await longTaskDuration(page), browserBudgets.markdownInputLongTasks);
+  recordMetric("markdownPreviewBuildP95", summarize(previewBuildSamples).p95, browserBudgets.markdownPreviewBuildP95);
+  recordMetric(
+    "markdownPreviewScannedCharactersP95",
+    summarize(previewScanSamples).p95,
+    browserBudgets.markdownPreviewScannedCharactersP95,
+  );
+});
+
+test("keeps 1MB Markdown live preview work viewport-bounded", async ({ page }) => {
+  test.setTimeout(60_000);
+  const workspace = createLongMarkdownWorkspace(1_000_000);
+  expect(new TextEncoder().encode(workspace.nodes["perf-long-markdown"].markdown).byteLength).toBe(1_000_000);
+  await loadWorkspace(page, workspace);
+  await openOutline(page, 30_000);
+  await page.locator('[data-tree-block-key="perf-long-markdown"] .node-bullet').click();
+  const editor = page.locator('.root-node-heading[data-node-id="perf-long-markdown"] .cm-content');
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await page.keyboard.press("Control+End");
+
+  const inputSamples: number[] = [];
+  const previewBuildSamples: number[] = [];
+  const previewScanSamples: number[] = [];
+  await clearLongTasks(page);
+  for (let index = 0; index < 10; index += 1) {
+    await clearAppMarks(page);
+    const startedAt = await page.evaluate(() => performance.now());
+    await page.keyboard.type("x");
+    await settle(page);
+    inputSamples.push(await page.evaluate((start) => performance.now() - start, startedAt));
+    const marks = await appMarks(page);
+    previewBuildSamples.push(...pairedMarkDurations(
+      marks,
+      "markdown:preview-visible-build-start",
+      "markdown:preview-visible-build-end",
+    ));
+    previewScanSamples.push(...markValues(marks, "markdown:preview-visible-build-start"));
+  }
+
+  recordDiagnostic("markdown1MbInputP95", summarize(inputSamples).p95, "ms");
+  recordDiagnostic("markdown1MbInputLongTaskCount", (await longTaskDurations(page)).length, "count");
+  recordMetric("markdown1MbPreviewBuildP95", summarize(previewBuildSamples).p95, browserBudgets.markdownPreviewBuildP95);
+  recordMetric(
+    "markdown1MbPreviewScannedCharactersP95",
+    summarize(previewScanSamples).p95,
+    browserBudgets.markdownPreviewScannedCharactersP95,
+  );
 });
 
 test("profiles 100 edits in a 10k-node workspace with 100KB Markdown", async ({ page }) => {
@@ -255,7 +312,7 @@ async function loadWorkspace(page: Page, workspace: ReturnType<typeof createWide
       stringifyDurations: [] as number[],
       storageWriteDurations: [] as number[],
     };
-    const appMarks: Array<{ name: AppPerformanceProbeName; timestamp: number }> = [];
+    const appMarks: Array<{ name: AppPerformanceProbeName; timestamp: number; value?: number }> = [];
     if (PerformanceObserver.supportedEntryTypes.includes("longtask")) {
       new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) longTasks.push(entry.duration);
@@ -293,8 +350,8 @@ async function loadWorkspace(page: Page, workspace: ReturnType<typeof createWide
     };
     window.__aisijiPerformanceHarness = harness;
     window.__aisijiPerformanceProbe = {
-      mark(name, timestamp) {
-        appMarks.push({ name, timestamp });
+      mark(name, timestamp, value) {
+        appMarks.push({ name, timestamp, value });
       },
     };
 
@@ -329,9 +386,9 @@ async function loadWorkspace(page: Page, workspace: ReturnType<typeof createWide
   await page.goto("/");
 }
 
-async function openOutline(page: Page) {
+async function openOutline(page: Page, timeout = 5_000) {
   await page.getByRole("button", { name: "所有笔记", exact: true }).first().click();
-  await expect(page.getByRole("tree", { name: "节点树" })).toBeVisible();
+  await expect(page.getByRole("tree", { name: "节点树" })).toBeVisible({ timeout });
   await settle(page);
 }
 
@@ -426,4 +483,28 @@ function lastMark(marks: readonly { name: AppPerformanceProbeName; timestamp: nu
 
 function countMarks(marks: readonly { name: AppPerformanceProbeName }[], name: AppPerformanceProbeName) {
   return marks.filter((mark) => mark.name === name).length;
+}
+
+function markValues(
+  marks: readonly { name: AppPerformanceProbeName; value?: number }[],
+  name: AppPerformanceProbeName,
+) {
+  return marks.flatMap((mark) => mark.name === name && mark.value !== undefined ? [mark.value] : []);
+}
+
+function pairedMarkDurations(
+  marks: readonly { name: AppPerformanceProbeName; timestamp: number }[],
+  startName: AppPerformanceProbeName,
+  endName: AppPerformanceProbeName,
+) {
+  const durations: number[] = [];
+  let start: number | null = null;
+  for (const mark of marks) {
+    if (mark.name === startName) start = mark.timestamp;
+    else if (mark.name === endName && start !== null) {
+      durations.push(Math.max(0, mark.timestamp - start));
+      start = null;
+    }
+  }
+  return durations;
 }

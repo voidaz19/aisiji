@@ -10,7 +10,7 @@ import {
   moveAcrossVisibleComponentBackward,
   moveAcrossVisibleComponentForward,
 } from "./markdownVisibleEditing";
-import { atMarkdownVisualEnd, atMarkdownVisualStart, markdownAtomsAt } from "./markdownDecorations";
+import { atMarkdownVisualEnd, atMarkdownVisualStart, markdownAtomsAt, markdownPreviewRanges } from "./markdownDecorations";
 
 const views: EditorView[] = [];
 
@@ -58,6 +58,13 @@ afterEach(() => {
 });
 
 describe("Markdown live preview", () => {
+  it("limits preview decoration scans to visible lines with one-line context", () => {
+    const state = EditorState.create({ doc: "one\ntwo\nthree\nfour\nfive\nsix" });
+
+    expect(markdownPreviewRanges(state, [{ from: 4, to: 7 }])).toEqual([{ from: 0, to: 13 }]);
+    expect(markdownPreviewRanges(state, [{ from: 4, to: 7 }, { from: 16, to: 18 }])).toEqual([{ from: 0, to: 23 }]);
+  });
+
   it("styles parsed formats and does not parse bold inside inline code", () => {
     const view = createView("start **bold** and `**code**`");
 

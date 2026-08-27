@@ -11,7 +11,7 @@
 - 连续可编辑画布与节点选择：节点内拖选文字，越过节点布局后预览连续节点范围，也可用 `Ctrl/Cmd+点击` 选择不连续节点；节点选区支持删除、`Tab` 批量缩进和 `Shift+Tab` 批量提升，结构操作后保留选区
 - 文本与节点选区浮动菜单：完成选择后在对象上方显示；文本支持常用格式、复制和剪切，节点支持复制、剪切、删除以及当前可执行的提升/缩进操作，复制后提供明确反馈
 - 统一的桌面与浏览器控件视觉：画布、按钮、输入框、文本选区和滚动条使用应用样式，同时保留键盘焦点反馈
-- 语法树驱动的 Markdown Live Preview：H1-H6、引用、待办、粗体、斜体、删除线、高亮、行内代码和分隔线
+- 语法树驱动的 Markdown Live Preview：H1-H6、引用、待办、粗体、斜体、删除线、高亮、行内代码和分隔线；长文按可见范围更新预览装饰
 - 统一的插入与格式菜单：通过节点旁的 `+` 菜单搜索并执行格式、结构、节点链接和文件操作；Markdown 快捷输入仍可直接使用
 - 普通链接、节点链接、图片与已登记附件预览；Markdown 控制符按需显形、当前节点源码模式和常用格式快捷键
 - 单一“插入文件”入口支持桌面原生多选和资源管理器拖放；文件按 MIME 类型自动进入图片、音频、视频、PDF、文本或普通文件预览，并在异步处理期间保持插入位置和后续节点层级动画稳定
@@ -58,13 +58,13 @@ npm run build
 cargo check --config 'source.crates-io.replace-with="rsproxy"' --config 'source.rsproxy.registry="sparse+https://rsproxy.cn/index/"'
 ```
 
-性能回归使用固定的 1k/10k 工作区与 100KB Markdown 夹具，覆盖输入分段、Long Task、虚拟化 DOM、节点切换和拖拽：
+性能回归使用固定的 1k/10k 工作区与 100KB/1MB Markdown 夹具，覆盖输入分段、Live Preview 扫描范围、Long Task、虚拟化 DOM、节点切换和拖拽：
 
 ```powershell
 npm run test:perf
 ```
 
-当前性能红线与重大重做边界见 [性能测试规范](docs/PERFORMANCE.md) 和 [2026-08-02 性能架构审查](docs/PERFORMANCE_AUDIT_2026-08-02.md)。性能测试失败表示已记录的问题仍存在，不应通过放宽预算隐藏。
+当前性能红线与重大重做边界见 [性能测试规范](docs/PERFORMANCE.md) 和 [2026-08-02 性能架构审查](docs/PERFORMANCE_AUDIT_2026-08-02.md)。长文多选和大树拖拽仍可能比短文或小树卡顿，相关 Store 失效、拖拽虚拟化和增量持久化施工尚未完成；性能测试失败表示已记录的问题仍存在，不应通过放宽预算隐藏。
 
 Windows release 二进制输出在 `src-tauri/target/release/tauri-app.exe`。
 

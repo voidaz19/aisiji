@@ -27,6 +27,8 @@ export const browserBudgets = {
   expandedDomRows: { unit: "count", maximum: 80, scalable: false },
   markdownInputP95: { unit: "ms", maximum: 200 },
   markdownInputLongTasks: { unit: "ms", maximum: 400 },
+  markdownPreviewBuildP95: { unit: "ms", maximum: 34 },
+  markdownPreviewScannedCharactersP95: { unit: "count", maximum: 65_536, scalable: false },
   combinedMarkdownInputP95: { unit: "ms", maximum: 200 },
   combinedWorkspaceSerializeP95: { unit: "ms", maximum: 25 },
   combinedStorageWriteP95: { unit: "ms", maximum: 25 },

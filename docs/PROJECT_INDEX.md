@@ -51,7 +51,7 @@ src-tauri/src/
 | SQLite 文本日志压缩与 VACUUM | src-tauri/src/database.rs | cargo check 与桌面端维护入口 |
 | 附件引用保留与物理删除 | src/domain/purgeDeletedNodes.ts、src-tauri/src/attachments.rs | src/domain/purgeDeletedNodes.test.ts |
 | CodeMirror 近视口挂载 | src/components/InlineEditor.tsx | src/components/InlineEditor.test.tsx |
-| Markdown 语法树预览与格式命令 | src/components/markdown/ | src/components/markdown/*.test.ts |
+| Markdown 语法树预览、视口有界装饰与格式命令 | src/components/markdown/markdownDecorations.ts、src/components/markdown/ | src/components/markdown/markdownDecorations.test.ts、src/components/markdown/*.test.ts、performance/browser.perf.spec.ts |
 | 统一输入菜单、虚实编辑器交接与附件插入流程 | src/components/editorTarget.ts、src/components/EditorCommandMenu.tsx、src/components/GhostEditor.tsx、src/components/InlineEditor.tsx、src/components/attachmentInsertion.ts、src/components/attachmentUploadState.ts、src/components/markdown/markdownCommands.ts、src/store/useNotebookStore.ts | src/components/editorTarget.test.ts、src/components/EditorCommandMenu.test.ts、src/components/GhostEditor.test.tsx、src/components/InlineEditor.test.tsx、src/components/attachmentInsertion.test.ts、src/components/markdown/markdownCommands.test.ts、src/store/useNotebookStore.test.ts、docs/编辑规范.md |
 | 节点与行内文本选区浮动菜单 | src/components/SelectionMenu.tsx、src/components/InlineEditor.tsx、src/features/notebook/NotebookPanel.tsx、src/features/notebook/hooks/useNodeRangeSelection.ts、src/platform/clipboard.ts | src/components/SelectionMenu.test.tsx、src/components/InlineEditor.test.tsx、src/features/notebook/NotebookPanel.test.tsx |
 | Windows/Tauri 原生路径拖放与附件导入 | src/platform/nativeAttachments.ts、src/platform/attachments.ts、src/components/InlineEditor.tsx、src-tauri/tauri.conf.json、src-tauri/src/attachments.rs | src/components/InlineEditor.test.tsx、src/store/useNotebookStore.test.ts、Tauri 配置 schema |
@@ -66,7 +66,7 @@ src-tauri/src/
 | 树块空白坐标命中 | src/components/treeHitTesting.ts | src/components/treeHitTesting.test.ts |
 | 页面级连续可编辑画布落点 | src/features/notebook/NotebookPanel.tsx、src/App.css | src/features/notebook/NotebookPanel.test.tsx |
 | 大列表窗口化和交互兼容 | src/features/notebook/NotebookPanel.tsx | src/features/notebook/NotebookPanel.test.tsx |
-| 自动化性能基线、输入分段探针与回归预算 | performance/fixtures.ts、performance/budgets.ts、performance/metrics.ts、src/shared/performanceProbe.ts、playwright.performance.config.ts、vitest.performance.config.ts | performance/domain.perf.test.ts、performance/browser.perf.spec.ts、docs/PERFORMANCE.md、`npm run test:perf` |
+| 自动化性能基线、输入/Live Preview 分段探针与回归预算 | performance/fixtures.ts、performance/budgets.ts、performance/metrics.ts、src/shared/performanceProbe.ts、playwright.performance.config.ts、vitest.performance.config.ts | performance/domain.perf.test.ts、performance/browser.perf.spec.ts、docs/PERFORMANCE.md、`npm run test:perf` |
 | 性能架构审查与重做边界 | docs/PERFORMANCE_AUDIT_2026-08-02.md | 重大性能施工前按审查顺序补齐分项基线并重新确认 |
 | 增量持久化目标架构 | docs/PERSISTENCE_SPEC.md、docs/ARCHITECTURE.md | 实施前冻结待确认决策；实施后由 Repository 合同、schema 重建与性能测试接替 |
 | 节点与视图根层级线 | src/features/notebook/hooks/useHierarchyGuides.ts | src/features/notebook/NotebookPanel.test.tsx、src/features/notebook/model/hierarchyGuideLayout.test.ts |

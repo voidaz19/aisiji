@@ -2,6 +2,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from "@codemirror/view";
 import type { SyntaxNodeRef } from "@lezer/common";
+import { markAppPerformance } from "../../shared/performanceProbe";
 import {
   attachmentIdFromTarget,
   clickableExternalTarget,
@@ -98,6 +99,8 @@ function revealedBoundary(state: EditorState, hasFocus: boolean): RevealedBounda
   if (!hasFocus) return null;
   const candidates: RevealedBoundary[] = [];
   syntaxTree(state).iterate({
+    from: selection.from,
+    to: selection.to,
     enter(node) {
       if (!boundaryParentTypes.has(node.type.name)) return;
       if (selection.from >= node.from && selection.to <= node.to) {
@@ -148,10 +151,47 @@ interface MarkdownDecorationSets {
   atomicRanges: DecorationSet;
 }
 
+export interface MarkdownPreviewRange {
+  from: number;
+  to: number;
+}
+
+/**
+ * Expands rendered ranges to complete lines plus one context line. Markdown
+ * parsing stays incremental in Lezer; this bounds our decoration walk to the
+ * part of the document that CodeMirror can currently display.
+ */
+export function markdownPreviewRanges(
+  state: EditorState,
+  visibleRanges: readonly MarkdownPreviewRange[],
+): MarkdownPreviewRange[] {
+  if (!visibleRanges.length) return [{ from: 0, to: 0 }];
+  const expanded = visibleRanges.map((range) => {
+    const first = state.doc.lineAt(Math.max(0, Math.min(range.from, state.doc.length)));
+    const last = state.doc.lineAt(Math.max(0, Math.min(range.to, state.doc.length)));
+    const fromLine = Math.max(1, first.number - 1);
+    const toLine = Math.min(state.doc.lines, last.number + 1);
+    return { from: state.doc.line(fromLine).from, to: state.doc.line(toLine).to };
+  }).sort((left, right) => left.from - right.from);
+
+  const merged: MarkdownPreviewRange[] = [];
+  for (const range of expanded) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.from <= previous.to + 1) previous.to = Math.max(previous.to, range.to);
+    else merged.push({ ...range });
+  }
+  return merged;
+}
+
 export type MarkdownAtomKind = "hidden" | "component";
 export interface MarkdownAtomicRange { from: number; to: number; kind: MarkdownAtomKind }
 
-function buildMarkdownDecorationSets(state: EditorState, hasFocus = false, composing = false): MarkdownDecorationSets {
+function buildMarkdownDecorationSets(
+  state: EditorState,
+  hasFocus = false,
+  composing = false,
+  scanRanges?: readonly MarkdownPreviewRange[],
+): MarkdownDecorationSets {
   const ranges: Range<Decoration>[] = [];
   const atomicRanges: Range<Decoration>[] = [];
   const sourceMode = state.field(markdownSourceMode, false) || composing;
@@ -161,8 +201,7 @@ function buildMarkdownDecorationSets(state: EditorState, hasFocus = false, compo
     ranges.push(decoration.range(from, to));
     atomicRanges.push(Decoration.replace({ markdownAtom: kind }).range(from, to));
   };
-  syntaxTree(state).iterate({
-    enter(node) {
+  const enter = (node: SyntaxNodeRef) => {
       const name = node.type.name;
       const className = formatClasses[name];
       if (className) ranges.push(Decoration.mark({ class: className }).range(node.from, node.to));
@@ -252,8 +291,13 @@ function buildMarkdownDecorationSets(state: EditorState, hasFocus = false, compo
           ranges.push(Decoration.mark({ class: "cm-live-hidden-mark" }).range(node.from, to));
         }
       }
-    },
-  });
+  };
+  const tree = syntaxTree(state);
+  if (scanRanges?.length) {
+    for (const range of scanRanges) tree.iterate({ enter, from: range.from, to: range.to });
+  } else {
+    tree.iterate({ enter });
+  }
   return {
     decorations: Decoration.set(ranges, true),
     atomicRanges: Decoration.set(atomicRanges, true),
@@ -269,16 +313,30 @@ export const markdownLivePreview = ViewPlugin.fromClass(class {
   atomicRanges: DecorationSet;
 
   constructor(view: EditorView) {
-    const sets = buildMarkdownDecorationSets(view.state, view.hasFocus, view.composing);
+    const sets = this.buildVisible(view);
     this.decorations = sets.decorations;
     this.atomicRanges = sets.atomicRanges;
+  }
+
+  private buildVisible(view: EditorView) {
+    const scanRanges = markdownPreviewRanges(view.state, view.visibleRanges);
+    const scannedCharacters = scanRanges.reduce((total, range) => total + range.to - range.from, 0);
+    markAppPerformance("markdown:preview-visible-build-start", scannedCharacters);
+    const sets = buildMarkdownDecorationSets(
+      view.state,
+      view.hasFocus,
+      view.composing,
+      scanRanges,
+    );
+    markAppPerformance("markdown:preview-visible-build-end");
+    return sets;
   }
 
   update(update: ViewUpdate) {
     const sourceModeChanged = update.transactions.some((transaction) =>
       transaction.effects.some((effect) => effect.is(setMarkdownSourceMode)));
     if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged || sourceModeChanged) {
-      const sets = buildMarkdownDecorationSets(update.state, update.view.hasFocus, update.view.composing);
+      const sets = this.buildVisible(update.view);
       this.decorations = sets.decorations;
       this.atomicRanges = sets.atomicRanges;
     }
