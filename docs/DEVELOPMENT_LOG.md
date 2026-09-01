@@ -1402,3 +1402,8 @@
 - 当前工作区现有改动已提交到本地 `master`，提交号为 `b547410`（发布流程提交）。
 - 首次执行 `git push -u origin master` 时，本机到 GitHub 的 HTTPS 连接在 443 端口失败；代码目前仍未上传，未发生远端部分更新。
 - 用户需在可访问 GitHub 的终端重新执行推送，随后推送 `v0.1.0` 标签触发 Windows NSIS 自动发布。
+
+### 后续状态
+
+- 重试后 `master` 已成功推送到 `https://github.com/voidaz19/aisiji.git`，远端提交为 `a2e93ef`，与本地一致。
+- 当前尚未创建或推送 `v0.1.0` 标签；GitHub Actions 尚未触发。标签推送仍受 GitHub 登录/网络访问状态影响。
