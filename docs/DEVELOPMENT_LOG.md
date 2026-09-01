@@ -1407,3 +1407,9 @@
 
 - 重试后 `master` 已成功推送到 `https://github.com/voidaz19/aisiji.git`，远端提交为 `a2e93ef`，与本地一致。
 - 当前尚未创建或推送 `v0.1.0` 标签；GitHub Actions 尚未触发。标签推送仍受 GitHub 登录/网络访问状态影响。
+
+### 首次公开发布结果
+
+- `v0.1.0` 标签已成功推送，GitHub Actions 运行 `33478693939` 成功完成 Windows 云端构建。
+- Release 页面为 `https://github.com/voidaz19/aisiji/releases/tag/v0.1.0`，已上传 Windows x64 NSIS 安装包，大小约 4.22 MiB。
+- 用户下一步需从 Release 页面下载并在本机验收安装、启动、开始菜单入口和卸载；README 仍等待用户确认后再更新。
