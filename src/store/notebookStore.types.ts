@@ -16,6 +16,7 @@ export interface NotebookStore extends NotebookState {
   /** UI-only suppression for the transient child ghost after deleting an empty child. */
   ghostSuppressed: Record<string, boolean>;
   initialize: () => void;
+  generateDebugSamples: () => number;
   setQuery: (query: string) => void;
   setActiveNode: (nodeId: string | null) => void;
   focusNode: (nodeId: string, cursor?: number | "end") => void;

@@ -52,17 +52,26 @@ export function useNodeRangeSelection(
   const selectedKeys = useMemo(() => new Set(expandedSelection.keys), [expandedSelection.keys]);
   const selectionRootKeys = useMemo(() => new Set(expandedSelection.rootKeys), [expandedSelection.rootKeys]);
   const canIndentSelection = useMemo(
-    () => Boolean(selection && executeIndentSelection(useNotebookStore.getState(), expandedSelection.keys, 0).changed),
-    [expandedSelection.keys, nodes, selection],
+    () => {
+      // During pointer preview the selection changes once per pointer move.
+      // The command preview scans the complete node tree, while its result is
+      // only needed after the selection menu becomes available.
+      if (!selection || !selectionMenuReady) return false;
+      return executeIndentSelection(useNotebookStore.getState(), expandedSelection.keys, 0).changed;
+    },
+    [expandedSelection.keys, nodes, selection, selectionMenuReady],
   );
   const canOutdentSelection = useMemo(
-    () => Boolean(selection && executeOutdentSelection(
-      useNotebookStore.getState(),
-      expandedSelection.keys,
-      activeRootId,
-      0,
-    ).changed),
-    [activeRootId, expandedSelection.keys, nodes, selection],
+    () => {
+      if (!selection || !selectionMenuReady) return false;
+      return executeOutdentSelection(
+        useNotebookStore.getState(),
+        expandedSelection.keys,
+        activeRootId,
+        0,
+      ).changed;
+    },
+    [activeRootId, expandedSelection.keys, nodes, selection, selectionMenuReady],
   );
 
   const clear = useCallback((focusKey?: string) => {

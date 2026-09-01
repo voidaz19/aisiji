@@ -60,7 +60,7 @@ type DropDebugLayout = {
   pointerY: number;
 };
 
-const VIRTUALIZATION_THRESHOLD = 200;
+const VIRTUALIZATION_THRESHOLD = 80;
 
 export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDebug = false, isVisible = true }: Props) {
   markAppPerformance("notebook:render");

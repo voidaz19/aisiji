@@ -68,9 +68,18 @@ export function subtreeBottomInset(rootDepth: number, lastDepth: number, gap: nu
 
 /** Measures every node block and expanded subtree block from the same row geometry. */
 export function measuredTreeBlocks(rows: readonly MeasuredTreeRow[], subtreeGap: number): MeasuredTreeBlock[] {
+  const endIndices = new Array<number>(rows.length);
+  const openRoots: number[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    while (openRoots.length && rows[openRoots[openRoots.length - 1]].depth >= rows[index].depth) {
+      endIndices[openRoots.pop()!] = index - 1;
+    }
+    openRoots.push(index);
+  }
+  while (openRoots.length) endIndices[openRoots.pop()!] = rows.length - 1;
+
   return rows.map((root, startIndex) => {
-    let endIndex = startIndex;
-    while (endIndex + 1 < rows.length && rows[endIndex + 1].depth > root.depth) endIndex += 1;
+    const endIndex = endIndices[startIndex];
     const last = rows[endIndex];
     return {
       rootId: root.key,

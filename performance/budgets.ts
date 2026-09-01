@@ -16,6 +16,8 @@ export const domainBudgets = {
   visibleTree10kP95: { unit: "ms", maximum: 50 },
   search10kP95: { unit: "ms", maximum: 20 },
   layoutRows1kP95: { unit: "ms", maximum: 5 },
+  dropSlots10kP95: { unit: "ms", maximum: 100 },
+  subtreeBlocks10kP95: { unit: "ms", maximum: 20 },
 } satisfies Record<string, PerformanceBudget>;
 
 export const browserBudgets = {
@@ -29,6 +31,8 @@ export const browserBudgets = {
   markdownInputLongTasks: { unit: "ms", maximum: 400 },
   markdownPreviewBuildP95: { unit: "ms", maximum: 34 },
   markdownPreviewScannedCharactersP95: { unit: "count", maximum: 65_536, scalable: false },
+  multiNodeSelectionLongTaskCount: { unit: "count", maximum: 0, scalable: false },
+  multiNodeSelectionDomRows: { unit: "count", maximum: 100, scalable: false },
   combinedMarkdownInputP95: { unit: "ms", maximum: 200 },
   combinedWorkspaceSerializeP95: { unit: "ms", maximum: 25 },
   combinedStorageWriteP95: { unit: "ms", maximum: 25 },
@@ -40,6 +44,7 @@ export const browserBudgets = {
   dragComplete: { unit: "ms", maximum: 1_000 },
   dragSlowFrameRatio: { unit: "ratio", maximum: 0.3 },
   dragVirtualizedDomRows: { unit: "count", maximum: 100, scalable: false },
+  drag10kStart: { unit: "ms", maximum: 1_000 },
 } satisfies Record<string, PerformanceBudget>;
 
 export function scaledMaximum(budget: PerformanceBudget): number {

@@ -1,0 +1,53 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ github.ref_name }}".TrimStart("v")
+          $tauriVersion = (Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+          $packageVersion = (Get-Content "package.json" -Raw | ConvertFrom-Json).version
+
+          if ($tagVersion -ne $tauriVersion -or $tagVersion -ne $packageVersion) {
+            throw "Release tag, Tauri version, and package version must match. tag=$tagVersion tauri=$tauriVersion package=$packageVersion"
+          }
+
+      - name: Build and publish GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "爱思记 ${{ github.ref_name }}"
+          releaseBody: "Windows x64 安装包。"
+          releaseDraft: false
+          prerelease: false
+          args: --bundles nsis

@@ -1280,3 +1280,116 @@
 
 - 第 3 步的完整 Store 内容变更/派生索引/订阅失效协议尚未施工；第 4 步还需补充长行滚动中的精确落点回归。
 - 本轮 README 暂不更新，等待用户实际验收长文多选和 1k/10k 拖拽后再同步当前能力。
+
+## 2026-08-27：节点数量场景纠偏与中等规模交互优化
+
+### 用户反馈与诊断纠偏
+
+- 用户明确指出：单个节点内容很长时，节点选择或拖拽并不卡；卡顿发生在同一页面存在多个节点时。此前把问题归因到长 Markdown 行高和内容长度是错误的。
+- 性能场景改为 160 个短文本节点，隔离 Markdown 长度变量。审计确认原窗口化门槛为 200，导致 80～199 行的中等规模页面全部挂载；此前 40 与 1k/10k 场景恰好漏掉这一区间。
+- 节点拖选过程中还会在每次选区变化时执行 `executeIndentSelection` 和 `executeOutdentSelection`，两次预演都会扫描完整节点树，但其结果仅供抬指后出现的选区菜单使用。
+
+### 实现
+
+- `NotebookPanel` 将窗口化门槛从 200 行下调到 80 行，使中等规模页面的节点选择、命中测试和 dnd-kit 订阅数量保持视口有界。
+- `useNodeRangeSelection` 在拖选预览阶段跳过批量缩进/提升命令预演，只在选区完成且菜单可用后计算；选择语义和菜单能力不变。
+- 浏览器性能回归新增 160 节点短文本范围选择，并把拖拽矩阵扩展为 160/1k/10k；选择 Long Task 和两类交互的 DOM 行数均设硬预算。
+
+### 定向验证
+
+- `NotebookPanel.test.tsx`：52 条测试通过；性能测试 TypeScript 检查通过。
+- Chromium 专项 4 个场景通过：160 节点范围选择无 Long Task，选择和 160/1k/10k 拖拽均只挂载 37 行；最终复跑中 160 节点拖拽预览约 180ms。
+- 自动化 40 步鼠标插值包含工具调度时间，因此最终复跑的选择总墙钟约 893ms 仅作诊断，不作为交互预算；结构预算和 Long Task 才作为硬门槛。
+- 完整 `npm run check` 通过：模块边界、性能源码类型、39 个测试文件/318 条测试、生产构建、Rust 格式与 Rust 编译均正常；仍只有既有 editor chunk 超过 500kB 提示。
+- README 暂不更新，等待用户再次实测确认本轮有效。
+
+### 用户验收
+
+- 用户复测确认节点数量场景“有改善”，本阶段验收有效。
+- 按项目约定，`README.md` 已同步中/大节点页的窗口化、节点选择性能边界与 160/1k/10k 性能夹具说明。
+
+## 2026-08-27：极端规模拖拽启动线性化
+
+### 范围与根因
+
+- 用户确认进入下一步，继续处理前一轮明确保留的 10k 节点拖拽启动红线；不改数据格式、持久化协议和拖放语义。
+- 10k 拖拽虽然只挂载 37 行，但启动仍约 4.18s。根因是 `createTreeDropSlots` 为每个槽位线性扫描已有槽位，并重复复制/筛选/查找移动节点的同级列表，平铺大树形成平方级路径。
+- `measuredTreeBlocks` 为每个节点重新向后寻找子树终点，深层嵌套树同样存在平方级退化。
+
+### 实现
+
+- `src/domain/dropSlots.ts` 使用 `Set` 维护槽位 ID，并在一次 child index 上预先计算移动节点的父级与下一同级节点；当前位置和合法性判断不再逐槽位扫描同级列表。
+- `src/features/notebook/model/subtreeLayout.ts` 使用单调栈一次性确定每行对应的子树末端，保持原有输出顺序、间距和 `isSubtree` 语义。
+- 纯逻辑性能回归新增 10k 拖拽槽位与 10k 深层子树矩形预算；Chromium 10k 拖拽启动从诊断项升级为 1000ms 硬预算，继续保留 100 行 DOM 上限。
+
+### 验证
+
+- 领域与布局定向测试：2 个文件/13 条测试通过；性能源码 TypeScript 检查通过。
+- 纯逻辑性能套件 6 个场景通过：10k 槽位 P95 13.13ms（预算 100ms），10k 深层子树矩形 P95 0.35ms（预算 20ms）。
+- Chromium 10k 拖拽专项通过：单场景启动 227ms，最终 160/1k/10k 完整专项矩阵中为 608ms（预算 1000ms），拖拽中 DOM 37 行（预算 100）。相较上一轮同机约 4.18s，启动等待已消除。
+- README、性能规范、架构审查和项目索引已同步。
+- 完整 `npm run check` 通过：模块边界、性能源码类型、39 个测试文件/318 条测试、生产构建、Rust 格式与 Rust 编译均正常；仍只有既有 editor chunk 超过 500kB 提示。
+- 最终 Chromium 矩阵 4 个场景全部通过：160 节点范围选择无 Long Task，选择及 160/1k/10k 拖拽均为 37 个 DOM 行，10k 拖拽启动 608ms。
+
+## 2026-08-27：设置页调试样例生成
+
+### 需求与边界
+
+- 用户要求在设置页增加调试功能：仅当工作区还没有样例笔记时，一键生成可用于各种测试的样例笔记。
+- 样例使用保留的 `debug-sample-` ID 前缀识别；已有普通用户笔记不阻止生成，已有样例（包括已进入回收站的样例）不会被覆盖或重复生成。
+- 生成通过一次 Store 提交和一次 `create_debug_samples` 操作落盘，不调用逐节点 UI 创建动作，不改变现有用户数据。
+
+### 实现
+
+- 新增 `src/domain/debugSamples.ts` 纯业务生成器：固定生成总览、48 个连续选择节点、层级/折叠分支、Markdown 语法样例和 UTF-8 100KB 长 Markdown 节点。
+- `NotebookStore` 新增 `generateDebugSamples` 动作；`SettingsPanel` 新增“调试样例”区，显示样例数量，生成后按钮禁用并反馈生成数量。
+- 新增领域和设置页交互测试，覆盖确定性结构、100KB 文本、幂等性、普通用户笔记共存和按钮状态。
+- `docs/PROJECT_INDEX.md` 已索引新模块；README 暂不更新，等待用户验收本轮功能后再同步面向使用者说明。
+
+### 定向验证
+
+- `src/domain/debugSamples.test.ts` 与 `src/features/settings/SettingsPanel.test.tsx` 共 5 条测试通过。
+- `npm run check:perf-types`、`npm run check:boundaries` 和 `npm run build` 通过；构建仍只有既有 editor chunk 超过 500kB 提示。
+- 用户验收确认调试样例功能无问题；按项目约定，`README.md` 已同步设置页入口和样例覆盖范围。
+
+## 2026-09-01：Windows NSIS 正式安装包
+
+### 用户确认与发布决策
+
+- 用户确认主要使用 Windows `.exe` 安装包，不通过 Microsoft Store 安装。
+- 产品正式名称确定为“爱思记”；继续沿用现有黄色笑脸 Logo。
+- 本轮只收敛 Windows NSIS 安装包，不引入自动更新、代码签名或商店发布，避免扩大架构和发布流程范围。
+
+### 实现
+
+- `src-tauri/tauri.conf.json` 将产品名和窗口标题统一为“爱思记”。
+- Tauri bundle targets 从 `all` 收敛为 `nsis`，正式发布入口为 `*-setup.exe`。
+- NSIS 安装器和卸载器复用 `src-tauri/icons/icon.ico`，安装模式默认为当前用户，开始菜单文件夹为“爱思记”。
+- `docs/PROJECT_INDEX.md` 增加 Windows NSIS 发布配置和产物索引。
+- `README.md` 暂不更新，等待用户实际安装并确认本轮发布包有效后再同步面向使用者说明。
+
+### 验证
+
+- 首次 `npm run check` 已通过模块边界、性能 TypeScript、41 个测试文件/323 条测试和前端生产构建；Rust 配置校验指出 `nsis` 位于错误层级。根因是将其写在 `bundle` 下，正确路径为 `bundle.windows.nsis`；已原地修正，不升级 Tauri 依赖。
+- 修正后的完整 `npm run check` 通过：模块边界、性能 TypeScript、41 个测试文件/323 条测试、生产构建、Rust 格式和 Rust 编译均正常；Vite 仅保留既有 editor chunk 超过 500kB 提示。
+- `npm run tauri build` 成功，只生成一个 NSIS x64 安装程序：`src-tauri/target/release/bundle/nsis/爱思记_0.1.0_x64-setup.exe`（4,426,829 bytes，SHA-256：`BBD62DE0E342B037303BE60864E61CEE3E69BF753EE8C9F8156304BB3C24A887`）。
+- 安装包 Authenticode 状态为 `NotSigned`，符合本轮未引入代码签名的范围；对外发布前需要单独确认并实施证书签名流程。
+- 尚未在本机自动执行安装器，避免影响当前开发环境；待用户手动安装验收名称、黄色笑脸图标、开始菜单入口和卸载入口后，再按约定更新 README。
+
+## 2026-09-01：GitHub Windows 安装包自动发布
+
+### 发布决策
+
+- 用户确认使用 GitHub 对外发布，不使用 Microsoft Store。
+- 仓库当前未配置 GitHub remote，因此本轮只提交可复用的发布自动化和发布规范；创建公开 GitHub 仓库、配置 remote 与首次推送需要由拥有 GitHub 账号权限的用户完成。
+
+### 实现
+
+- 新增 `.github/workflows/release-windows.yml`：推送 `v*` 标签时在 GitHub Windows runner 上安装 Node 22、Rust stable 和锁定依赖，构建 NSIS 包并创建公开 GitHub Release。
+- 工作流在发布前强制校验 Git 标签、`src-tauri/tauri.conf.json` 和 `package.json` 的版本一致；不一致会失败，避免发布页和安装包版本错配。
+- 新增 `docs/GITHUB_RELEASE.md`，记录一次性仓库准备、版本发布、发布后验收和未签名安装包的安全提示。
+- `docs/PROJECT_INDEX.md` 已索引发布规范和自动化入口；README 按约定继续等待用户确认安装包验收结果后再更新。
+
+### 验证
+
+- 本地检查工作流 YAML 结构和版本校验逻辑；完整云端构建需在 GitHub remote 配置完成、首次推送版本标签后由 GitHub Actions 执行。

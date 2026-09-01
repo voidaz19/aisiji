@@ -141,6 +141,40 @@ test("keeps 1MB Markdown live preview work viewport-bounded", async ({ page }) =
   );
 });
 
+test("profiles multi-node range selection in a medium short-node outline", async ({ page }) => {
+  await loadWorkspace(page, createWideWorkspace(160));
+  await openOutline(page);
+  const source = page.locator('[data-tree-block-key="perf-node-000000"] .node-content');
+  const target = page.locator('[data-tree-block-key="perf-node-000020"] .node-content');
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  expect(sourceBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+  await clearLongTasks(page);
+  await clearAppMarks(page);
+  const startedAt = await page.evaluate(() => performance.now());
+  await page.mouse.move(sourceBox!.x + sourceBox!.width / 2, sourceBox!.y + sourceBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + targetBox!.height / 2, { steps: 40 });
+  await page.mouse.up();
+  await settle(page);
+  const marks = await appMarks(page);
+  const renderedRows = await page.locator('[data-tree-row="true"]').count();
+  recordDiagnostic("multiNodeSelectionElapsed", await page.evaluate((start) => performance.now() - start, startedAt), "ms");
+  recordMetric(
+    "multiNodeSelectionLongTaskCount",
+    (await longTaskDurations(page)).length,
+    browserBudgets.multiNodeSelectionLongTaskCount,
+  );
+  recordMetric("multiNodeSelectionDomRows", renderedRows, browserBudgets.multiNodeSelectionDomRows);
+  recordDiagnostic("multiNodeSelectionNotebookRenders", countMarks(marks, "notebook:render"), "count");
+  recordDiagnostic("multiNodeSelectionTopologyComputes", countMarks(marks, "notebook:topology-compute"), "count");
+  recordDiagnostic("multiNodeSelectionTreeRowRenders", countMarks(marks, "tree-row:render"), "count");
+  expect(await page.locator(".tree-row.is-node-selected").count()).toBeGreaterThan(1);
+});
+
 test("profiles 100 edits in a 10k-node workspace with 100KB Markdown", async ({ page }) => {
   test.setTimeout(60_000);
   const workspace = createCombinedStressWorkspace();
@@ -274,8 +308,8 @@ test("completes pointer drag within frame budget", async ({ page }) => {
   recordMetric("dragSlowFrameRatio", action.slowFrameRatio, browserBudgets.dragSlowFrameRatio);
 });
 
-for (const nodeCount of [1_000, 10_000]) {
-  test(`keeps ${nodeCount / 1_000}k-node drag virtualized`, async ({ page }) => {
+for (const nodeCount of [160, 1_000, 10_000]) {
+  test(`keeps ${nodeCount}-node drag virtualized`, async ({ page }) => {
     test.setTimeout(60_000);
     await loadWorkspace(page, createWideWorkspace(nodeCount));
     await openOutline(page);
@@ -289,8 +323,10 @@ for (const nodeCount of [1_000, 10_000]) {
       await page.mouse.move(sourceBox!.x + sourceBox!.width / 2 + 12, sourceBox!.y + sourceBox!.height / 2 + 12, { steps: 3 });
       await expect(page.locator(".drag-preview")).toBeVisible({ timeout: 30_000 });
       const renderedRows = await page.locator('[data-tree-row="true"]').count();
-      recordDiagnostic(`drag${nodeCount / 1_000}kStart`, Date.now() - startedAt, "ms");
-      recordMetric(`drag${nodeCount / 1_000}kDomRows`, renderedRows, browserBudgets.dragVirtualizedDomRows);
+      const dragStart = Date.now() - startedAt;
+      if (nodeCount === 10_000) recordMetric("drag10000NodeStart", dragStart, browserBudgets.drag10kStart);
+      else recordDiagnostic(`drag${nodeCount}NodeStart`, dragStart, "ms");
+      recordMetric(`drag${nodeCount}NodeDomRows`, renderedRows, browserBudgets.dragVirtualizedDomRows);
     } finally {
       await page.mouse.up();
     }

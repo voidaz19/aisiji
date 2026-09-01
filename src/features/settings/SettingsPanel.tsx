@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Cloud, Database, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Bug, Cloud, Database, SlidersHorizontal, Trash2 } from "lucide-react";
 import { hasTauriRuntime } from "../../platform/runtime";
 import { probeWebDav, saveSyncCredentials, type SyncCredentials } from "../../platform/syncCredentials";
 import { useNotebookStore } from "../../store/useNotebookStore";
+import { hasDebugSamples, isDebugSampleNode } from "../../domain/debugSamples";
 
 const DEFAULT_ENDPOINT = "https://dav.jianguoyun.com/dav/";
 
@@ -16,9 +17,14 @@ export function SettingsPanel() {
   const [testing, setTesting] = useState(false);
   const [maintaining, setMaintaining] = useState(false);
   const [maintenanceStatus, setMaintenanceStatus] = useState("");
+  const [sampleStatus, setSampleStatus] = useState("");
+  const [generatingSamples, setGeneratingSamples] = useState(false);
+  const nodes = useNotebookStore((state) => state.nodes);
+  const generateDebugSamples = useNotebookStore((state) => state.generateDebugSamples);
   const deletedNodeCount = useNotebookStore((state) => Object.values(state.nodes).filter((node) => Boolean(node.deletedAt)).length);
   const emptyTrash = useNotebookStore((state) => state.emptyTrash);
   const maintainStorage = useNotebookStore((state) => state.maintainStorage);
+  const debugSampleCount = Object.values(nodes).filter((node) => isDebugSampleNode(node.id)).length;
 
   const updateCredential = (key: keyof SyncCredentials, value: string) => {
     setCredentials((current) => ({ ...current, [key]: value }));
@@ -73,6 +79,20 @@ export function SettingsPanel() {
       setMaintaining(false);
     }
   };
+  const generateSamples = () => {
+    if (hasDebugSamples({ nodes })) {
+      setSampleStatus("测试样例已存在");
+      return;
+    }
+    setGeneratingSamples(true);
+    setSampleStatus("正在生成测试样例...");
+    try {
+      const created = generateDebugSamples();
+      setSampleStatus(created ? `已生成 ${created} 个测试节点` : "测试样例已存在");
+    } finally {
+      setGeneratingSamples(false);
+    }
+  };
 
   return (
     <div className="settings-page">
@@ -87,6 +107,16 @@ export function SettingsPanel() {
           <button className="subtle-button" type="button" onClick={() => void testConnection()} disabled={testing}>{testing ? "测试中..." : "测试连接"}</button>
         </div>
         {status && <p className="settings-status">{status}</p>}
+      </section>
+      <section className="settings-section">
+        <div className="section-title"><Bug size={19} /><div><h2>调试样例</h2><p>生成一组可重复使用的节点、层级和 Markdown 测试数据。</p></div></div>
+        <div className="setting-row"><span>样例节点</span><span className="setting-value">{debugSampleCount} 个</span></div>
+        <div className="settings-actions">
+          <button className="subtle-button" type="button" onClick={generateSamples} disabled={generatingSamples || debugSampleCount > 0}>
+            <Bug size={15} />{generatingSamples ? "生成中..." : debugSampleCount > 0 ? "已生成测试样例" : "生成测试样例"}
+          </button>
+        </div>
+        {sampleStatus && <p className="settings-status">{sampleStatus}</p>}
       </section>
       <section className="settings-section">
         <div className="section-title"><SlidersHorizontal size={19} /><div><h2>编辑偏好</h2><p>日期节点使用设备的固定工作区时区。Markdown 即时渲染保持单编辑区。</p></div></div>

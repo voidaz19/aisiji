@@ -6,6 +6,7 @@ import { createSeedState, ensureDateNode, updateMarkdown, toggleCollapsed, setCh
 import { newId, ROOT_ID, type AttachmentRecord, type NodeField, type Operation, type NotebookState } from "../domain/model";
 import { selectHydrationWorkspace } from "../domain/notebookState";
 import { contentNodesChanged } from "../domain/recentPages";
+import { createDebugSamples } from "../domain/debugSamples";
 import { purgeDeletedNodes } from "../domain/purgeDeletedNodes";
 import { deleteStoredAttachments, storeAttachment } from "../platform/attachments";
 import { awaitWorkspacePersistence, loadNativeWorkspace, maintainNativeDatabase, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
@@ -101,6 +102,14 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       }
       commit(next);
       set({ activeRootId: node.parentId ?? ROOT_ID, activeNodeId: node.id, activeGhostParentId: null });
+    },
+    generateDebugSamples: () => {
+      const result = createDebugSamples(get(), Date.now());
+      if (!result.createdNodeIds.length) return 0;
+      commit(result.state, createOperation("create_debug_samples", result.rootId, {
+        nodeIds: result.createdNodeIds,
+      }));
+      return result.createdNodeIds.length;
     },
     setQuery: (query) => set({ query }),
     setActiveNode: (activeNodeId) => set({ activeNodeId, activeNodeCursor: null, activeGhostParentId: null }),

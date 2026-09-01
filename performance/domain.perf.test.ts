@@ -1,6 +1,8 @@
 import { performance } from "node:perf_hooks";
 import { treeLayoutRows } from "../src/features/notebook/model/treeLayoutRows";
+import { measuredTreeBlocks } from "../src/features/notebook/model/subtreeLayout";
 import { visibleNodesForView } from "../src/features/notebook/model/notebookView";
+import { createTreeDropSlots, type VisibleTreeNode } from "../src/domain/dropSlots";
 import { domainBudgets, scaledMaximum } from "./budgets";
 import { createWideWorkspace } from "./fixtures";
 import { metric, summarize, writePerformanceResult, type RecordedMetric } from "./metrics";
@@ -37,6 +39,26 @@ describe("domain performance budgets", () => {
     const summary = measure(() => treeLayoutRows(visible, workspace, {}, "root"));
     metrics.layoutRows1kP95 = metric(summary.p95, domainBudgets.layoutRows1kP95);
     expect(summary.p95).toBeLessThanOrEqual(scaledMaximum(domainBudgets.layoutRows1kP95));
+  });
+
+  it("builds 10k drop slots within budget", () => {
+    const workspace = createWideWorkspace(10_000);
+    const visible = visibleNodesForView(workspace, "outline", "root", "") as VisibleTreeNode[];
+    const summary = measure(() => createTreeDropSlots(workspace, visible, "root", visible[0].id));
+    metrics.dropSlots10kP95 = metric(summary.p95, domainBudgets.dropSlots10kP95);
+    expect(summary.p95).toBeLessThanOrEqual(scaledMaximum(domainBudgets.dropSlots10kP95));
+  });
+
+  it("measures 10k nested subtree blocks within budget", () => {
+    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+      key: `nested-${index}`,
+      depth: index,
+      top: index * 31,
+      bottom: index * 31 + 24,
+    }));
+    const summary = measure(() => measuredTreeBlocks(rows, 8));
+    metrics.subtreeBlocks10kP95 = metric(summary.p95, domainBudgets.subtreeBlocks10kP95);
+    expect(summary.p95).toBeLessThanOrEqual(scaledMaximum(domainBudgets.subtreeBlocks10kP95));
   });
 });
 
