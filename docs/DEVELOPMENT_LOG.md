@@ -1393,3 +1393,12 @@
 ### 验证
 
 - 本地检查工作流 YAML 结构和版本校验逻辑；完整云端构建需在 GitHub remote 配置完成、首次推送版本标签后由 GitHub Actions 执行。
+
+## 2026-09-01：GitHub 仓库接入
+
+### 状态
+
+- 已核实 `https://github.com/voidaz19/aisiji.git` 为 `voidaz19/aisiji` 的公开空仓库，并配置为本地 `origin`。
+- 当前工作区现有改动已提交到本地 `master`，提交号为 `b547410`（发布流程提交）。
+- 首次执行 `git push -u origin master` 时，本机到 GitHub 的 HTTPS 连接在 443 端口失败；代码目前仍未上传，未发生远端部分更新。
+- 用户需在可访问 GitHub 的终端重新执行推送，随后推送 `v0.1.0` 标签触发 Windows NSIS 自动发布。
