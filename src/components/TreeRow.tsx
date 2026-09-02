@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type RefCallback } from "react";
+import { memo, type CSSProperties, type ReactNode, type RefCallback } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronDown, ChevronRight, Circle } from "lucide-react";
@@ -24,6 +24,7 @@ interface Props {
   measureRef?: RefCallback<HTMLElement>;
   navigationPreviousKey?: string;
   navigationNextKey?: string;
+  supplement?: ReactNode;
 }
 
 type SortableBehavior = Pick<
@@ -65,6 +66,7 @@ function TreeBlockFrame({
   measureRef,
   navigationPreviousKey,
   navigationNextKey,
+  supplement,
 }: Props & { sortable?: SortableBehavior }) {
   const collapsed = useNotebookStore((state) => block.kind === "node" ? state.collapsed[block.node.id] : undefined);
   const toggleNode = useNotebookStore((state) => state.toggleNode);
@@ -77,6 +79,7 @@ function TreeBlockFrame({
     "tree-row",
     virtualTop !== undefined ? "is-virtual-row" : "",
     block.kind === "placeholder" ? "ghost-child" : "",
+    supplement ? "has-supplement" : "",
     `layout-gap-${layoutGap}`,
     selected ? "is-node-selected" : "",
     hasSubtreeSelection ? "has-subtree-selection" : "",
@@ -153,6 +156,7 @@ function TreeBlockFrame({
             : <div className="date-content">{node.dateKey}</div>
           : <GhostEditor parentId={block.parentId} />}
       </div>
+      {supplement ? <div className="tree-row-supplement">{supplement}</div> : null}
     </div>
   );
 }
@@ -172,6 +176,7 @@ function treeBlockRowPropsEqual(previous: Props, next: Props): boolean {
     || previous.measureRef !== next.measureRef
     || previous.navigationPreviousKey !== next.navigationPreviousKey
     || previous.navigationNextKey !== next.navigationNextKey
+    || previous.supplement !== next.supplement
     || previous.block.kind !== next.block.kind
     || previous.block.key !== next.block.key
     || previous.block.parentId !== next.block.parentId

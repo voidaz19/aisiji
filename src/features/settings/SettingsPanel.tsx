@@ -1,13 +1,32 @@
 import { useState } from "react";
-import { Bug, Cloud, Database, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Bug, Cloud, Database, SlidersHorizontal, ToggleLeft, Trash2 } from "lucide-react";
 import { hasTauriRuntime } from "../../platform/runtime";
 import { probeWebDav, saveSyncCredentials, type SyncCredentials } from "../../platform/syncCredentials";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { hasDebugSamples, isDebugSampleNode } from "../../domain/debugSamples";
+import { DEFAULT_LAYOUT_DEBUG_VISIBILITY, LayoutDebugPanel, type LayoutDebugVisibility } from "../notebook/LayoutDebugPanel";
 
 const DEFAULT_ENDPOINT = "https://dav.jianguoyun.com/dav/";
 
-export function SettingsPanel() {
+interface SettingsPanelProps {
+  layoutDebug?: boolean;
+  layoutDebugVisibility?: LayoutDebugVisibility;
+  onLayoutDebugChange?: (enabled: boolean) => void;
+  onLayoutDebugVisibilityChange?: (next: LayoutDebugVisibility) => void;
+}
+
+export function SettingsPanel({
+  layoutDebug,
+  layoutDebugVisibility,
+  onLayoutDebugChange,
+  onLayoutDebugVisibilityChange,
+}: SettingsPanelProps = {}) {
+  const [localLayoutDebug, setLocalLayoutDebug] = useState(false);
+  const [localLayoutDebugVisibility, setLocalLayoutDebugVisibility] = useState(DEFAULT_LAYOUT_DEBUG_VISIBILITY);
+  const effectiveLayoutDebug = layoutDebug ?? localLayoutDebug;
+  const effectiveLayoutDebugVisibility = layoutDebugVisibility ?? localLayoutDebugVisibility;
+  const setLayoutDebug = onLayoutDebugChange ?? setLocalLayoutDebug;
+  const setLayoutDebugVisibility = onLayoutDebugVisibilityChange ?? setLocalLayoutDebugVisibility;
   const [credentials, setCredentials] = useState<SyncCredentials>({
     endpoint: DEFAULT_ENDPOINT,
     username: "",
@@ -122,6 +141,14 @@ export function SettingsPanel() {
         <div className="section-title"><SlidersHorizontal size={19} /><div><h2>编辑偏好</h2><p>日期节点使用设备的固定工作区时区。Markdown 即时渲染保持单编辑区。</p></div></div>
         <div className="setting-row"><span>附件下载</span><span className="setting-value">按需下载，可固定离线</span></div>
         <div className="setting-row"><span>本地历史</span><span className="setting-value">长期保留</span></div>
+      </section>
+      <section className="settings-section">
+        <div className="section-title"><ToggleLeft size={19} /><div><h2>布局调试</h2><p>显示节点布局、层级线和拖拽命中区域，用于检查界面几何。</p></div></div>
+        <label className="setting-toggle">
+          <input type="checkbox" checked={effectiveLayoutDebug} onChange={(event) => setLayoutDebug(event.currentTarget.checked)} />
+          <span>启用布局调试框</span>
+        </label>
+        {effectiveLayoutDebug ? <LayoutDebugPanel value={effectiveLayoutDebugVisibility} onChange={setLayoutDebugVisibility} /> : null}
       </section>
       <section className="settings-section">
         <div className="section-title"><Database size={19} /><div><h2>本地存储维护</h2><p>无需打开回收站即可永久清理软删除数据，并压缩冗余文本编辑日志。</p></div></div>

@@ -8,6 +8,7 @@ import { selectHydrationWorkspace } from "../domain/notebookState";
 import { contentNodesChanged } from "../domain/recentPages";
 import { createDebugSamples } from "../domain/debugSamples";
 import { purgeDeletedNodes } from "../domain/purgeDeletedNodes";
+import { addSupertag, removeSupertag } from "../domain/supertags";
 import { deleteStoredAttachments, storeAttachment } from "../platform/attachments";
 import { awaitWorkspacePersistence, loadNativeWorkspace, maintainNativeDatabase, readBrowserWorkspace, saveWorkspace } from "../platform/workspaceRepository";
 import { localDateKey } from "../shared/date";
@@ -354,6 +355,18 @@ export const useNotebookStore = create<NotebookStore>((set, get) => {
       if (!field) return;
       const next = { ...get(), fields: { ...get().fields, [fieldId]: { ...field, value, updatedAt: Date.now() } } };
       commit(next, createOperation("set_field", fieldId, { field: next.fields[fieldId] }));
+    },
+    addSupertag: (nodeId, supertagId) => {
+      const current = get();
+      const next = addSupertag(current, nodeId, supertagId);
+      if (next === current) return;
+      commit(next, createOperation("add_supertag", nodeId, { supertagId }));
+    },
+    removeSupertag: (nodeId, supertagId) => {
+      const current = get();
+      const next = removeSupertag(current, nodeId, supertagId);
+      if (next === current) return;
+      commit(next, createOperation("remove_supertag", nodeId, { supertagId }));
     },
     addAttachment: async (nodeId, source) => {
       const id = newId("attachment");

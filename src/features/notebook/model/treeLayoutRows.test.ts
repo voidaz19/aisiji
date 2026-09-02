@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyState, ROOT_ID, type NodeRecord } from "../../../domain/model";
+import { CANVAS_SUPERTAG_ID } from "../../../domain/supertags";
 import { visibleLayoutGap } from "./subtreeLayout";
 import { treeLayoutRows } from "./treeLayoutRows";
 
@@ -71,5 +72,38 @@ describe("rendered tree layout rows", () => {
       "between-subtrees",
       "between-subtrees",
     ]);
+  });
+
+  it("replaces an expanded Canvas subtree with one local grid on ordinary outlines", () => {
+    const state = createEmptyState();
+    const canvas = { ...content("canvas", ROOT_ID, 1, 0), supertagIds: [CANVAS_SUPERTAG_ID] };
+    const first = content("first", canvas.id, 1, 1);
+    const grandchild = content("grandchild", first.id, 1, 2);
+    const second = content("second", canvas.id, 2, 1);
+    const sibling = content("sibling", ROOT_ID, 2, 0);
+    for (const node of [canvas, first, grandchild, second, sibling]) state.nodes[node.id] = node;
+
+    const rows = treeLayoutRows([canvas, first, grandchild, second, sibling], state, {}, null, true);
+
+    expect(rows.map((row) => row.key)).toEqual(["canvas", "sibling"]);
+    expect(rows[0].localCanvasCards?.map(({ node, childCount }) => ({ id: node.id, childCount }))).toEqual([
+      { id: "first", childCount: 1 },
+      { id: "second", childCount: 0 },
+    ]);
+  });
+
+  it("keeps Canvas descendants as ordinary rows when local grids are disabled or collapsed", () => {
+    const state = createEmptyState();
+    const canvas = { ...content("canvas", ROOT_ID, 1, 0), supertagIds: [CANVAS_SUPERTAG_ID] };
+    const child = content("child", canvas.id, 1, 1);
+    state.nodes[canvas.id] = canvas;
+    state.nodes[child.id] = child;
+
+    expect(treeLayoutRows([canvas, child], state, {}, null).map((row) => row.key)).toEqual(["canvas", "child"]);
+
+    state.collapsed[canvas.id] = true;
+    const collapsedRows = treeLayoutRows([canvas], state, {}, null, true);
+    expect(collapsedRows.map((row) => row.key)).toEqual(["canvas"]);
+    expect(collapsedRows[0].localCanvasCards).toBeUndefined();
   });
 });

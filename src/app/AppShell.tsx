@@ -13,6 +13,8 @@ import { markAppPerformance } from "../shared/performanceProbe";
 import { isNotebookView, type WorkspaceView } from "../shared/workspaceView";
 import { flushWorkspacePersistence } from "../platform/workspaceRepository";
 import { useNotebookStore } from "../store/useNotebookStore";
+import { hasSupertag, CANVAS_SUPERTAG_ID } from "../domain/supertags";
+import { DEFAULT_LAYOUT_DEBUG_VISIBILITY, type LayoutDebugVisibility } from "../features/notebook/LayoutDebugPanel";
 import { AppSidebar } from "./components/AppSidebar";
 import { TopBar } from "./components/TopBar";
 import {
@@ -25,17 +27,27 @@ import {
 } from "./navigationHistory";
 
 type NotebookPanelComponent = typeof import("../features/notebook/NotebookPanel")["NotebookPanel"];
+type CanvasPanelComponent = typeof import("../features/canvas/CanvasPanel")["CanvasPanel"];
 type SettingsPanelComponent = typeof import("../features/settings/SettingsPanel")["SettingsPanel"];
 
 let loadedNotebookPanel: NotebookPanelComponent | null = null;
+let loadedCanvasPanel: CanvasPanelComponent | null = null;
 let loadedSettingsPanel: SettingsPanelComponent | null = null;
 let notebookPanelPromise: ReturnType<typeof importNotebookPanel> | null = null;
+let canvasPanelPromise: ReturnType<typeof importCanvasPanel> | null = null;
 let settingsPanelPromise: ReturnType<typeof importSettingsPanel> | null = null;
 
 function importNotebookPanel() {
   return import("../features/notebook/NotebookPanel").then((module) => {
     loadedNotebookPanel = module.NotebookPanel;
     return module.NotebookPanel;
+  });
+}
+
+function importCanvasPanel() {
+  return import("../features/canvas/CanvasPanel").then((module) => {
+    loadedCanvasPanel = module.CanvasPanel;
+    return module.CanvasPanel;
   });
 }
 
@@ -51,6 +63,11 @@ function loadNotebookPanel() {
   return notebookPanelPromise;
 }
 
+function loadNotebookPanels() {
+  canvasPanelPromise ??= importCanvasPanel();
+  return Promise.all([loadNotebookPanel(), canvasPanelPromise]);
+}
+
 function loadSettingsPanel() {
   settingsPanelPromise ??= importSettingsPanel();
   return settingsPanelPromise;
@@ -59,12 +76,12 @@ function loadSettingsPanel() {
 function isViewReady(view: WorkspaceView): boolean {
   if (view === "home") return true;
   if (view === "settings") return loadedSettingsPanel !== null;
-  return loadedNotebookPanel !== null;
+  return loadedNotebookPanel !== null && loadedCanvasPanel !== null;
 }
 
 function prepareView(view: WorkspaceView): Promise<unknown> {
   if (view === "settings") return loadSettingsPanel();
-  if (view !== "home") return loadNotebookPanel();
+  if (view !== "home") return loadNotebookPanels();
   return Promise.resolve();
 }
 export function AppShell() {
@@ -79,8 +96,9 @@ export function AppShell() {
   const ensureTodayNode = useNotebookStore((state) => state.ensureTodayNode);
   const createChild = useNotebookStore((state) => state.createChild);
   const focusNode = useNotebookStore((state) => state.focusNode);
-  const layoutDebug = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).has("layout-debug");
+  const [layoutDebug, setLayoutDebug] = useState(() => typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).has("layout-debug"));
+  const [layoutDebugVisibility, setLayoutDebugVisibility] = useState<LayoutDebugVisibility>(DEFAULT_LAYOUT_DEBUG_VISIBILITY);
   const [view, setView] = useState<WorkspaceView>("home");
   const [notebookView, setNotebookView] = useState<WorkspaceView>("today");
   const [notebookRootId, setNotebookRootId] = useState(ROOT_ID);
@@ -111,7 +129,7 @@ export function AppShell() {
   }, []);
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void Promise.all([loadNotebookPanel(), loadSettingsPanel()]).then(() => {
+      void Promise.all([loadNotebookPanels(), loadSettingsPanel()]).then(() => {
         setLoadedPanelsVersion((version) => version + 1);
       });
     }, 100);
@@ -239,10 +257,11 @@ export function AppShell() {
       applyCapture();
       return;
     }
-    void loadNotebookPanel().then(() => flushSync(applyCapture));
+    void loadNotebookPanels().then(() => flushSync(applyCapture));
   };
 
   const NotebookPanel = loadedNotebookPanel;
+  const CanvasPanel = loadedCanvasPanel;
   const SettingsPanel = loadedSettingsPanel;
   const notebookIsVisible = view !== "home" && view !== "settings";
   useLayoutEffect(() => {
@@ -251,6 +270,11 @@ export function AppShell() {
     }
   }, [activeRootId, notebookIsVisible, notebookRootId]);
   const notebookActiveRoot = nodes[notebookRootId] ?? null;
+  const activeRootIsCanvas = notebookIsVisible
+    && notebookView !== "search"
+    && notebookView !== "trash"
+    && notebookActiveRoot?.kind === "content"
+    && hasSupertag({ nodes }, notebookActiveRoot.id, CANVAS_SUPERTAG_ID);
   const notebookVisible = useMemo(
     () => visibleNodesForView({ nodes, collapsed }, notebookView, notebookRootId, query),
     [collapsed, nodes, notebookRootId, notebookView, query],
@@ -275,15 +299,25 @@ export function AppShell() {
           onOpenViewRoot={openViewRoot}
         />
         {view === "home" ? <DashboardPanel onNavigate={navigate} todayNode={todayNode} /> : null}
-        {view === "settings" && SettingsPanel ? <SettingsPanel /> : null}
+        {view === "settings" && SettingsPanel ? (
+          <SettingsPanel
+            layoutDebug={layoutDebug}
+            layoutDebugVisibility={layoutDebugVisibility}
+            onLayoutDebugChange={setLayoutDebug}
+            onLayoutDebugVisibilityChange={setLayoutDebugVisibility}
+          />
+        ) : null}
+        {activeRootIsCanvas && notebookActiveRoot && CanvasPanel ? <CanvasPanel root={notebookActiveRoot} /> : null}
         {NotebookPanel ? (
-          <div className="notebook-host" hidden={!notebookIsVisible} aria-hidden={!notebookIsVisible}>
+          <div className="notebook-host" hidden={!notebookIsVisible || activeRootIsCanvas} aria-hidden={!notebookIsVisible || activeRootIsCanvas}>
             <NotebookPanel
               view={notebookView}
               activeRoot={notebookActiveRoot}
               rootId={notebookRootId}
               visibleNodes={notebookVisible}
               layoutDebug={layoutDebug}
+              layoutDebugVisibility={layoutDebugVisibility}
+              onLayoutDebugVisibilityChange={setLayoutDebugVisibility}
               isVisible={notebookIsVisible}
             />
           </div>

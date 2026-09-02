@@ -47,6 +47,8 @@ export interface NotebookStore extends NotebookState {
   maintainStorage: () => Promise<number>;
   addField: (nodeId: string, key: string, type: FieldType, value: string) => void;
   updateField: (fieldId: string, value: string) => void;
+  addSupertag: (nodeId: string, supertagId: string) => void;
+  removeSupertag: (nodeId: string, supertagId: string) => void;
   addAttachment: (nodeId: string, source: AttachmentPathSource) => Promise<AttachmentRecord>;
   hydrate: () => Promise<void>;
 }

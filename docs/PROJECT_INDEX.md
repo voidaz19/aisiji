@@ -36,6 +36,7 @@ src-tauri/src/
 | `docs/PERFORMANCE.md` | 性能夹具、采样规则、回归预算、结果格式与平台覆盖边界 | 性能场景、指标、预算或执行环境变化时 |
 | `docs/PERFORMANCE_AUDIT_2026-08-02.md` | 输入、渲染、Live Preview、虚拟化和持久化路线的性能架构审查 | 重大性能架构施工前复核；结论被新基线推翻时更新 |
 | `docs/PERSISTENCE_SPEC.md` | SQLite/IndexedDB 增量实体、事务、操作合并，以及不读取旧数据的开发期 schema 重建边界 | 持久化模型、Repository 契约或数据初始化策略变化前 |
+| `docs/CANVAS_SUPERTAG_SPEC.md` | Canvas 内建 supertag、自动网格视图和明确非目标 | Canvas 交互、数据模型或同步语义变化前 |
 | `docs/GITHUB_RELEASE.md` | GitHub Releases 的 Windows 安装包发布前提、版本规则和验收流程 | 更换发布渠道、发布平台或版本策略时 |
 | `docs/DEVELOPMENT_LOG.md` | 每轮施工范围、决策与验证结果 | 每次修改代码或项目文档时 |
 | `README.md` | 面向使用者的项目能力和运行说明 | 用户确认本轮工作有效后 |
@@ -72,6 +73,7 @@ src-tauri/src/
 | 增量持久化目标架构 | docs/PERSISTENCE_SPEC.md、docs/ARCHITECTURE.md | 实施前冻结待确认决策；实施后由 Repository 合同、schema 重建与性能测试接替 |
 | 节点与视图根层级线 | src/features/notebook/hooks/useHierarchyGuides.ts | src/features/notebook/NotebookPanel.test.tsx、src/features/notebook/model/hierarchyGuideLayout.test.ts |
 | 设置页调试样例工作区生成 | src/features/settings/SettingsPanel.tsx、src/domain/debugSamples.ts、src/store/useNotebookStore.ts | src/features/settings/SettingsPanel.test.tsx、src/domain/debugSamples.test.ts、src/store/useNotebookStore.test.ts |
+| Canvas supertag 根视图与树内局部网格 | src/domain/supertags.ts、src/features/canvas/CanvasPanel.tsx、src/features/canvas/CanvasCardGrid.tsx、src/features/notebook/model/treeLayoutRows.ts、src/store/useNotebookStore.ts | src/domain/supertags.test.ts、src/features/canvas/CanvasPanel.test.tsx、src/features/notebook/model/treeLayoutRows.test.ts、src/features/notebook/NotebookPanel.test.tsx、docs/CANVAS_SUPERTAG_SPEC.md |
 | Windows NSIS 正式安装包 | src-tauri/tauri.conf.json、src-tauri/icons/icon.ico | `npm run tauri build`、src-tauri/target/release/bundle/nsis/ |
 | GitHub Windows 自动发布 | .github/workflows/release-windows.yml、docs/GITHUB_RELEASE.md | 推送匹配版本的 `v*` 标签，检查 GitHub Actions 与 Releases |
 

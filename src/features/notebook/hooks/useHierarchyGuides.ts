@@ -219,23 +219,28 @@ export function useHierarchyGuides(
         const entry = entries[index];
         if (entry.placeholder || !entry.measured) continue;
         const firstChild = findFirstChild(entries, index, entry);
-        if (!firstChild) continue;
+        const localCanvas = entry.row.querySelector(".canvas-grid.is-local");
+        if (!firstChild && !localCanvas) continue;
         let lastDescendant = index + 1;
-        for (let cursor = index + 1; cursor < entries.length; cursor += 1) {
-          const candidate = entries[cursor];
-          if (candidate.depth < entry.depth) break;
-          if (candidate.depth === entry.depth) {
-            break;
+        if (!localCanvas) {
+          for (let cursor = index + 1; cursor < entries.length; cursor += 1) {
+            const candidate = entries[cursor];
+            if (candidate.depth < entry.depth) break;
+            if (candidate.depth === entry.depth) {
+              break;
+            }
+            lastDescendant = cursor;
           }
-          lastDescendant = cursor;
         }
         const endEntry = entries[lastDescendant];
-        if (!endEntry) continue;
-        const endRowBottom = containerRect.top + endEntry.row.offsetTop + endEntry.row.offsetHeight;
+        if (!localCanvas && !endEntry) continue;
+        const endRowBottom = localCanvas
+          ? stableElementBottom(localCanvas, entry.row, containerRect.top)
+          : containerRect.top + endEntry!.row.offsetTop + endEntry!.row.offsetHeight;
         const startBottom = entry.measured.multiline ? entry.measured.dotObject.bottom : entry.measured.object.bottom;
         const { y1, y2 } = hierarchyGuideVerticalRange({
           parentBottom: startBottom,
-          subtreeBottom: endRowBottom + subtreeBottomInset(entry.depth, endEntry.depth, subtreeEdge),
+          subtreeBottom: endRowBottom + subtreeBottomInset(entry.depth, localCanvas ? entry.depth + 1 : endEntry!.depth, subtreeEdge),
           containerTop: containerRect.top,
         });
         if (y2 <= y1) continue;
@@ -280,4 +285,9 @@ function layoutGuideAnchor(row: HTMLElement, container: HTMLElement): number | n
   // Layout offsets ignore the temporary FLIP transform applied while a node
   // changes indentation.
   return row.offsetLeft + bullet.offsetLeft + bullet.offsetWidth / 2 - container.scrollLeft;
+}
+
+function stableElementBottom(element: Element, row: HTMLElement, containerTop: number): number {
+  const rect = element.getBoundingClientRect();
+  return stableRowLayoutCoordinate(rect.bottom, row.getBoundingClientRect().top, containerTop, row.offsetTop);
 }

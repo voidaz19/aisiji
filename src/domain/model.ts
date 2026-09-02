@@ -15,6 +15,8 @@ export interface NodeRecord {
   revision: number;
   createdAt: number;
   updatedAt: number;
+  /** Optional capabilities attached to the node without changing its tree identity. */
+  supertagIds?: string[];
 }
 
 export interface NodeField {

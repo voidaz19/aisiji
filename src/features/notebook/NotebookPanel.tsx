@@ -12,7 +12,7 @@ import {
   type DragMoveEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Grid2X2, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { flushSync } from "react-dom";
 import { TreeBlockRow } from "../../components/TreeRow";
 import { treeBlockAtPoint } from "../../components/treeHitTesting";
@@ -22,15 +22,17 @@ import { SelectionMenu, selectionMenuIcons, type SelectionMenuAnchor } from "../
 import { createTreeDropSlots, type TreeDropSlot, type VisibleDropPlaceholder, type VisibleTreeNode } from "../../domain/dropSlots";
 import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
+import { CANVAS_SUPERTAG_ID, hasSupertag } from "../../domain/supertags";
 import { dateLabel } from "../../shared/date";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP } from "../../shared/treeLayout";
 import { markAppPerformance } from "../../shared/performanceProbe";
 import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
+import { CanvasCardGrid } from "../canvas/CanvasCardGrid";
 import { useHierarchyGuides } from "./hooks/useHierarchyGuides";
 import { useTreeLayoutAnimation } from "./hooks/useTreeLayoutAnimation";
 import { useNodeRangeSelection } from "./hooks/useNodeRangeSelection";
-import { DEFAULT_LAYOUT_DEBUG_VISIBILITY, LayoutDebugPanel } from "./LayoutDebugPanel";
+import { DEFAULT_LAYOUT_DEBUG_VISIBILITY, LayoutDebugPanel, type LayoutDebugVisibility } from "./LayoutDebugPanel";
 import { captureDragPreviewLayout, type DragPreviewLayout } from "./dragPreviewLayout";
 import { visibleDragPreview } from "./model/dragPreview";
 import { closestDropSlot, layoutDropSlots, noMoveZone, type DropRect, type DropSlotLayout } from "./model/dropIndicator";
@@ -44,6 +46,8 @@ interface Props {
   rootId: string;
   visibleNodes: NodeRecord[];
   layoutDebug?: boolean;
+  layoutDebugVisibility?: LayoutDebugVisibility;
+  onLayoutDebugVisibilityChange?: (next: LayoutDebugVisibility) => void;
   isVisible?: boolean;
 }
 
@@ -62,10 +66,20 @@ type DropDebugLayout = {
 
 const VIRTUALIZATION_THRESHOLD = 80;
 
-export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDebug = false, isVisible = true }: Props) {
+export function NotebookPanel({
+  view,
+  activeRoot,
+  rootId,
+  visibleNodes,
+  layoutDebug = false,
+  layoutDebugVisibility: controlledLayoutDebugVisibility,
+  onLayoutDebugVisibilityChange,
+  isVisible = true,
+}: Props) {
   markAppPerformance("notebook:render");
   const nodes = useNotebookStore((state) => state.nodes);
   const fields = useNotebookStore((state) => state.fields);
+  const addSupertag = useNotebookStore((state) => state.addSupertag);
   const collapsed = useNotebookStore((state) => state.collapsed);
   const ghostSuppressed = useNotebookStore((state) => state.ghostSuppressed);
   const activeNodeId = useNotebookStore((state) => state.activeNodeId);
@@ -87,7 +101,9 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
   const [nodeBoxes, setNodeBoxes] = useState<MeasuredNodeBox[]>([]);
   const [selectionBoxes, setSelectionBoxes] = useState<MeasuredSubtreeBox[]>([]);
   const [nodeSelectionAnchor, setNodeSelectionAnchor] = useState<SelectionMenuAnchor | null>(null);
-  const [layoutDebugVisibility, setLayoutDebugVisibility] = useState(DEFAULT_LAYOUT_DEBUG_VISIBILITY);
+  const [localLayoutDebugVisibility, setLocalLayoutDebugVisibility] = useState(DEFAULT_LAYOUT_DEBUG_VISIBILITY);
+  const layoutDebugVisibility = controlledLayoutDebugVisibility ?? localLayoutDebugVisibility;
+  const setLayoutDebugVisibility = onLayoutDebugVisibilityChange ?? setLocalLayoutDebugVisibility;
   const dropSlotRef = useRef<TreeDropSlot | null>(null);
   const activeDragIdRef = useRef<string | null>(null);
   const dragOriginPointerRef = useRef<DragPointer | null>(null);
@@ -106,6 +122,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
       { nodes, collapsed },
       ghostSuppressed,
       view === "today" || view === "outline" ? rootId : null,
+      view === "today" || view === "outline",
     );
   }, [collapsed, ghostSuppressed, nodes, rootId, view, visibleNodes]);
   useLayoutEffect(() => { markAppPerformance("notebook:commit"); });
@@ -323,6 +340,9 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     : [];
   const dragPreview = dragId ? visibleDragPreview(visibleNodes, dragId) : [];
   const dragSourceKeys = dragId ? treeBlockSubtreeKeys(renderedRows, dragId) : new Set<string>();
+  const layoutVisibleNodes = renderedRows.flatMap((row): VisibleTreeNode[] => row.kind === "node"
+    ? [{ ...row.node, depth: row.depth } as VisibleTreeNode]
+    : []);
 
   const measureDropLayout = (movingNodeId: string): MeasuredDropLayout => {
     const container = treeListRef.current;
@@ -402,7 +422,7 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
     }));
     const slots = createTreeDropSlots(
       state,
-      visibleNodes as VisibleTreeNode[],
+      layoutVisibleNodes,
       rootId,
       movingNodeId,
       renderedRows
@@ -587,6 +607,9 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
             <div className="search-input"><Search size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点内容" /></div>
           </div>
         )}
+        {activeRoot?.kind === "content" && view !== "search" && view !== "trash" && !hasSupertag({ nodes }, activeRoot.id, CANVAS_SUPERTAG_ID) && (
+          <button className="subtle-button" type="button" onClick={() => addSupertag(activeRoot.id, CANVAS_SUPERTAG_ID)}><Grid2X2 size={16} />添加 Canvas</button>
+        )}
       </section>
 
       {activeRoot && view !== "search" && view !== "trash" && activeFields.length > 0 && (
@@ -638,7 +661,21 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
               const path = `M ${line.x} ${line.y1} V ${line.y2}`;
               return (
                   <g key={line.id} data-hierarchy-node-id={line.id} className="hierarchy-line-group" style={{ opacity: line.opacity ?? 1 }}>
-                  <path className="hierarchy-line-hit" d={path} stroke="transparent" strokeWidth={10} onClick={() => toggleChildren(line.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleChildren(line.id); } }} tabIndex={0} role="button" aria-label="折叠或展开下一级节点" />
+                  <path
+                    className="hierarchy-line-hit"
+                    d={path}
+                    stroke="transparent"
+                    strokeWidth={10}
+                    onClick={() => toggleChildren(line.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      toggleChildren(line.id);
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    aria-label="折叠或展开下一级节点"
+                  />
                   <path className="hierarchy-line" d={path} aria-hidden="true" />
                 </g>
               );
@@ -705,6 +742,13 @@ export function NotebookPanel({ view, activeRoot, rootId, visibleNodes, layoutDe
               readOnly={view === "trash"}
               sourcePlaceholder={dragSourceKeys.has(row.key)}
               emptyDropTarget={emptyDropTargetKey === row.key}
+              supplement={row.kind === "node" && row.localCanvasCards ? (
+                <CanvasCardGrid
+                  cards={row.localCanvasCards}
+                  local
+                  label={`${row.node.markdown || "未命名节点"} 的局部 Canvas`}
+                />
+              ) : undefined}
             />;
           })}
         </div>

@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
+import { CANVAS_SUPERTAG_ID } from "../../domain/supertags";
 import { visibleNodes } from "../../domain/tree";
 import { useNotebookStore } from "../../store/useNotebookStore";
 import { NotebookPanel } from "./NotebookPanel";
@@ -301,6 +302,99 @@ describe("NotebookPanel root heading", () => {
 
     expect(rootEditor.state.selection.main.head).toBe(4);
     expect(posAtCoords).toHaveBeenLastCalledWith({ x: 201, y: 119 }, false);
+  });
+});
+
+describe("NotebookPanel local Canvas", () => {
+  it("renders an expanded Canvas node as a local grid without duplicate descendant rows", () => {
+    const store = useNotebookStore.getState();
+    const date = Object.values(store.nodes).find((node) => node.kind === "date")!;
+    const canvasId = store.createChild(date.id, "局部画布")!;
+    const firstId = useNotebookStore.getState().createChild(canvasId, "第一张卡片")!;
+    const secondId = useNotebookStore.getState().createChild(canvasId, "第二张卡片")!;
+    const grandchildId = useNotebookStore.getState().createChild(firstId, "卡片后代")!;
+    useNotebookStore.getState().addSupertag(canvasId, CANVAS_SUPERTAG_ID);
+
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+
+    const canvasRow = container.querySelector<HTMLElement>(`[data-selection-key="${canvasId}"]`)!;
+    expect(canvasRow).not.toBeNull();
+    expect(Array.from(container.querySelectorAll("[data-canvas-card-id]"), (card) => card.getAttribute("data-canvas-card-id"))).toEqual([
+      firstId,
+      secondId,
+    ]);
+    expect(container.querySelector(`[data-selection-key="${firstId}"]`)).toBeNull();
+    expect(container.querySelector(`[data-selection-key="${secondId}"]`)).toBeNull();
+    expect(container.querySelector(`[data-selection-key="${grandchildId}"]`)).toBeNull();
+
+    fireEvent.click(canvasRow.querySelector<HTMLButtonElement>('button[aria-label="折叠节点"]')!);
+    expect(container.querySelector("[aria-label='局部画布 的局部 Canvas']")).toBeNull();
+
+    fireEvent.click(canvasRow.querySelector<HTMLButtonElement>('button[aria-label="展开节点"]')!);
+    expect(container.querySelectorAll("[data-canvas-card-id]")).toHaveLength(2);
+  });
+
+  it("keeps Canvas-tagged nodes in ordinary rows in search results", () => {
+    const store = useNotebookStore.getState();
+    const canvasId = store.createChild(ROOT_ID, "可检索画布")!;
+    const childId = useNotebookStore.getState().createChild(canvasId, "命中内容")!;
+    useNotebookStore.getState().addSupertag(canvasId, CANVAS_SUPERTAG_ID);
+    const state = useNotebookStore.getState();
+    const canvas = { ...state.nodes[canvasId], depth: 0 } as NodeRecord & { depth: number };
+    const child = { ...state.nodes[childId], depth: 1 } as NodeRecord & { depth: number };
+
+    const { container } = render(
+      <NotebookPanel view="search" activeRoot={null} rootId={ROOT_ID} visibleNodes={[canvas, child]} />,
+    );
+
+    expect(container.querySelectorAll("[data-canvas-card-id]")).toHaveLength(0);
+    expect(container.querySelector(`[data-selection-key="${canvasId}"]`)).not.toBeNull();
+    expect(container.querySelector(`[data-selection-key="${childId}"]`)).not.toBeNull();
+  });
+
+  it("draws the local Canvas hierarchy line through the grid and keeps the standard hierarchy action", () => {
+    const store = useNotebookStore.getState();
+    const date = Object.values(store.nodes).find((node) => node.kind === "date")!;
+    const canvasId = store.createChild(date.id, "局部画布")!;
+    const cardId = useNotebookStore.getState().createChild(canvasId, "卡片")!;
+    useNotebookStore.getState().createChild(cardId, "卡片子节点");
+    useNotebookStore.getState().addSupertag(canvasId, CANVAS_SUPERTAG_ID);
+    vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("node-bullet") ? 32 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("node-bullet") ? 20 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (this: HTMLElement) {
+      const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-tree-row='true']"));
+      const index = rows.indexOf(this);
+      return index >= 0 ? index * 32 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.dataset.treeRow === "true" ? 24 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("tree-list")) return box(0, 50, 860, 500);
+      const row = this.closest<HTMLElement>("[data-tree-row='true']");
+      const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-tree-row='true']"));
+      const rowTop = 50 + (row ? Math.max(0, rows.indexOf(row)) * 32 : 0);
+      if (this.classList.contains("canvas-grid")) return box(48, rowTop + 32, 848, rowTop + 232);
+      if (this.classList.contains("node-dot")) return box(39, rowTop + 9, 45, rowTop + 15);
+      return box(0, rowTop, 860, rowTop + 24);
+    });
+
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const grid = container.querySelector<HTMLElement>(".canvas-grid.is-local")!;
+    const guide = container.querySelector<SVGGElement>(`[data-hierarchy-node-id="${canvasId}"]`)!;
+    const action = guide.querySelector<SVGPathElement>(".hierarchy-line-hit")!;
+    const path = guide.querySelector<SVGPathElement>(".hierarchy-line")!.getAttribute("d")!;
+    const y2 = Number(path.match(/ V ([\d.]+)$/)?.[1]);
+
+    expect(y2).toBeGreaterThanOrEqual(grid.getBoundingClientRect().bottom - 50 - 3);
+    expect(action.getAttribute("aria-label")).toBe("折叠或展开下一级节点");
+    fireEvent.click(action);
+    expect(useNotebookStore.getState().collapsed[cardId]).toBe(true);
+    expect(container.querySelector(".canvas-grid.is-local")).not.toBeNull();
   });
 });
 
