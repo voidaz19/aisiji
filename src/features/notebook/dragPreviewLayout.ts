@@ -1,5 +1,13 @@
 import type { CSSProperties } from "react";
 
+export interface DragPreviewGuide {
+  id: string;
+  x: number;
+  y1: number;
+  y2: number;
+  opacity?: number;
+}
+
 export interface DragPreviewRowLayout {
   rowStyle: CSSProperties;
   textStyle: CSSProperties;
@@ -8,6 +16,35 @@ export interface DragPreviewRowLayout {
 export interface DragPreviewLayout {
   width: number;
   rows: ReadonlyMap<string, DragPreviewRowLayout>;
+}
+
+/** Fades stationary dragged-subtree guides with the source row opacity. */
+export function applyDragPreviewGuideOpacity(
+  guides: readonly DragPreviewGuide[],
+  sourceKeys: ReadonlySet<string>,
+  sourceOpacity: number,
+): DragPreviewGuide[] {
+  const opacity = Math.max(0, Math.min(1, sourceOpacity));
+  return guides.map((guide) => sourceKeys.has(guide.id)
+    ? { ...guide, opacity: (guide.opacity ?? 1) * opacity }
+    : guide);
+}
+
+/** Converts tree-local hierarchy lines into coordinates owned by the dragged overlay. */
+export function relativeDragPreviewGuides(
+  guides: readonly DragPreviewGuide[],
+  blockKeys: ReadonlySet<string>,
+  sourceOffset: { left: number; top: number },
+): DragPreviewGuide[] {
+  return guides
+    .filter((guide) => blockKeys.has(guide.id))
+    .map((guide) => ({
+      ...guide,
+      x: guide.x - sourceOffset.left,
+      y1: guide.y1 - sourceOffset.top,
+      y2: guide.y2 - sourceOffset.top,
+    }))
+    .filter((guide) => guide.y2 > 0 && guide.y2 > guide.y1);
 }
 
 /** Captures the rendered tree geometry so the lightweight overlay wraps exactly like its source rows. */
@@ -37,7 +74,6 @@ export function captureDragPreviewLayout(
       rowStyle: {
         width: `${rowRect.width}px`,
         minHeight: `${rowRect.height}px`,
-        paddingLeft: rowStyle.paddingLeft,
         marginBottom: rowStyle.marginBottom,
       },
       textStyle: {

@@ -72,6 +72,7 @@ src-tauri/src/
 | 性能架构审查与重做边界 | docs/PERFORMANCE_AUDIT_2026-08-02.md | 重大性能施工前按审查顺序补齐分项基线并重新确认 |
 | 增量持久化目标架构 | docs/PERSISTENCE_SPEC.md、docs/ARCHITECTURE.md | 实施前冻结待确认决策；实施后由 Repository 合同、schema 重建与性能测试接替 |
 | 节点与视图根层级线 | src/features/notebook/hooks/useHierarchyGuides.ts | src/features/notebook/NotebookPanel.test.tsx、src/features/notebook/model/hierarchyGuideLayout.test.ts |
+| 节点子树拖拽预览、相对层级、层级线跟随/透明度与 Markdown Live Preview | src/features/notebook/DragPreview.tsx、src/features/notebook/dragPreviewLayout.ts、src/features/notebook/model/dragPreview.ts、src/features/notebook/NotebookPanel.tsx | src/features/notebook/DragPreview.test.tsx、src/features/notebook/dragPreviewLayout.test.ts、src/features/notebook/model/dragPreview.test.ts |
 | 设置页调试样例工作区生成 | src/features/settings/SettingsPanel.tsx、src/domain/debugSamples.ts、src/store/useNotebookStore.ts | src/features/settings/SettingsPanel.test.tsx、src/domain/debugSamples.test.ts、src/store/useNotebookStore.test.ts |
 | Canvas supertag 根视图与树内局部网格 | src/domain/supertags.ts、src/features/canvas/CanvasPanel.tsx、src/features/canvas/CanvasCardGrid.tsx、src/features/notebook/model/treeLayoutRows.ts、src/store/useNotebookStore.ts | src/domain/supertags.test.ts、src/features/canvas/CanvasPanel.test.tsx、src/features/notebook/model/treeLayoutRows.test.ts、src/features/notebook/NotebookPanel.test.tsx、docs/CANVAS_SUPERTAG_SPEC.md |
 | Windows NSIS 正式安装包 | src-tauri/tauri.conf.json、src-tauri/icons/icon.ico | `npm run tauri build`、src-tauri/target/release/bundle/nsis/ |

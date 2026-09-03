@@ -24,7 +24,7 @@ import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
 import { CANVAS_SUPERTAG_ID, hasSupertag } from "../../domain/supertags";
 import { dateLabel } from "../../shared/date";
-import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING, TREE_SUBTREE_GAP } from "../../shared/treeLayout";
+import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING } from "../../shared/treeLayout";
 import { markAppPerformance } from "../../shared/performanceProbe";
 import type { WorkspaceView } from "../../shared/workspaceView";
 import { useNotebookStore } from "../../store/useNotebookStore";
@@ -33,7 +33,8 @@ import { useHierarchyGuides } from "./hooks/useHierarchyGuides";
 import { useTreeLayoutAnimation } from "./hooks/useTreeLayoutAnimation";
 import { useNodeRangeSelection } from "./hooks/useNodeRangeSelection";
 import { DEFAULT_LAYOUT_DEBUG_VISIBILITY, LayoutDebugPanel, type LayoutDebugVisibility } from "./LayoutDebugPanel";
-import { captureDragPreviewLayout, type DragPreviewLayout } from "./dragPreviewLayout";
+import { applyDragPreviewGuideOpacity, captureDragPreviewLayout, relativeDragPreviewGuides, type DragPreviewGuide, type DragPreviewLayout } from "./dragPreviewLayout";
+import { DragPreview, type DragPreviewCanvasCard } from "./DragPreview";
 import { visibleDragPreview } from "./model/dragPreview";
 import { closestDropSlot, layoutDropSlots, noMoveZone, type DropRect, type DropSlotLayout } from "./model/dropIndicator";
 import { measuredTreeBlocks, visibleLayoutGap, visibleSubtreeExitCount } from "./model/subtreeLayout";
@@ -93,6 +94,7 @@ export function NotebookPanel({
   const focusGhost = useNotebookStore((state) => state.focusGhost);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragPreviewLayout, setDragPreviewLayout] = useState<DragPreviewLayout | null>(null);
+  const [dragPreviewGuides, setDragPreviewGuides] = useState<ReturnType<typeof relativeDragPreviewGuides>>([]);
   const [dragPlaceholderOpacity, setDragPlaceholderOpacity] = useState(0);
   const [dropIndicator, setDropIndicator] = useState<DropSlotLayout | null>(null);
   const [dropDebugLayout, setDropDebugLayout] = useState<DropDebugLayout | null>(null);
@@ -338,11 +340,17 @@ export function NotebookPanel({
   const activeFields = activeRoot
     ? Object.values(fields).filter((field) => field.nodeId === activeRoot.id)
     : [];
-  const dragPreview = dragId ? visibleDragPreview(visibleNodes, dragId) : [];
-  const dragSourceKeys = dragId ? treeBlockSubtreeKeys(renderedRows, dragId) : new Set<string>();
   const layoutVisibleNodes = renderedRows.flatMap((row): VisibleTreeNode[] => row.kind === "node"
     ? [{ ...row.node, depth: row.depth } as VisibleTreeNode]
     : []);
+  const canvasCardsByNodeId = new Map<string, readonly DragPreviewCanvasCard[]>(
+    renderedRows.flatMap((row) => row.kind === "node" && row.localCanvasCards
+      ? [[row.node.id, row.localCanvasCards] as const]
+      : []),
+  );
+  const dragPreview = dragId ? visibleDragPreview(layoutVisibleNodes, dragId) : [];
+  const dragSourceKeys = dragId ? treeBlockSubtreeKeys(renderedRows, dragId) : new Set<string>();
+  const displayedGuideLines = applyDragPreviewGuideOpacity(guideLines, dragSourceKeys, dragPlaceholderOpacity);
 
   const measureDropLayout = (movingNodeId: string): MeasuredDropLayout => {
     const container = treeListRef.current;
@@ -528,6 +536,12 @@ export function NotebookPanel({
     const slot = dropSlotRef.current;
     const directTarget = emptyDropTargetRef.current;
     const previewRects = measureDragPreviewRows();
+    const previewGuidePositions = measureDragPreviewGuides(dragPreviewGuides, treeListRef.current);
+    const releaseGuideOpacity = sourcePlaceholderOpacity(
+      dragOriginPointerRef.current,
+      dragPointerRef.current ?? dragOriginPointerRef.current ?? { clientX: 0, clientY: 0 },
+    );
+    const releaseGuideKeys = new Set(dragSourceKeys);
     flushSync(() => {
       if (directTarget) {
         moveToEmptyNode(String(event.active.id), directTarget.target);
@@ -537,6 +551,13 @@ export function NotebookPanel({
       resetDrag();
     });
     animateDroppedRows(previewRects, treeListRef.current);
+    animateReleasedHierarchyGuides(
+      releaseGuideKeys,
+      previewGuidePositions,
+      guideLines,
+      releaseGuideOpacity,
+      treeListRef.current,
+    );
   };
 
   const resetDrag = () => {
@@ -547,6 +568,7 @@ export function NotebookPanel({
     draggingRef.current = false;
     setDragId(null);
     setDragPreviewLayout(null);
+    setDragPreviewGuides([]);
     setDragPlaceholderOpacity(0);
     setDropIndicator(null);
     setDropDebugLayout(null);
@@ -564,13 +586,21 @@ export function NotebookPanel({
     dropSlotRef.current = null;
     const pointer = clientPointFromActivator(event.activatorEvent);
     const movingNodeId = String(event.active.id);
+    const previewItems = visibleDragPreview(layoutVisibleNodes, movingNodeId);
+    const previewKeys = new Set(previewItems.map(({ node }) => node.id));
+    const sourceRow = findTreeBlockElement(treeListRef.current, movingNodeId);
     activeDragIdRef.current = movingNodeId;
     dragOriginPointerRef.current = pointer;
     dragPointerRef.current = pointer;
     setDropIndicator(null);
     setDragPreviewLayout(captureDragPreviewLayout(
       treeListRef.current,
-      visibleDragPreview(visibleNodes, movingNodeId).map(({ node }) => node.id),
+      previewItems.map(({ node }) => node.id),
+    ));
+    setDragPreviewGuides(relativeDragPreviewGuides(
+      guideLines,
+      previewKeys,
+      { left: sourceRow?.offsetLeft ?? 0, top: sourceRow?.offsetTop ?? 0 },
     ));
     setDragId(movingNodeId);
     dragLayoutRef.current = null;
@@ -657,7 +687,7 @@ export function NotebookPanel({
             {layoutDebugVisibility.subtreeBlocks && subtreeBoxes.map((box) => <div key={box.rootId} className="subtree-layout-box" data-depth={box.depth} style={{ top: box.top, height: box.height, left: `${TREE_ROW_LEFT_PADDING + TREE_COLLAPSE_WIDTH + box.depth * TREE_LEVEL_INDENT}px`, right: 8 }} />)}
           </div>}
           <svg className="hierarchy-overlay" aria-label="层级线操作" role="group">
-            {guideLines.map((line) => {
+            {displayedGuideLines.map((line) => {
               const path = `M ${line.x} ${line.y1} V ${line.y2}`;
               return (
                   <g key={line.id} data-hierarchy-node-id={line.id} className="hierarchy-line-group" style={{ opacity: line.opacity ?? 1 }}>
@@ -754,26 +784,12 @@ export function NotebookPanel({
         </div>
         <DragOverlay dropAnimation={null}>
           {dragPreview.length > 0 ? (
-            <div className="drag-preview" aria-hidden="true" style={dragPreviewLayout ? { width: dragPreviewLayout.width } : undefined}>
-              {dragPreview.map(({ node }, index) => (
-                <div
-                  key={node.id}
-                  data-drag-preview-key={node.id}
-                  className={`drag-preview-row layout-gap-${visibleLayoutGap(dragPreview.map(({ node: previewNode }) => previewNode), index)}`}
-                  style={{
-                    paddingLeft: `${TREE_ROW_LEFT_PADDING + (node.depth ?? 0) * TREE_LEVEL_INDENT}px`,
-                    "--tree-exit-gap": `${visibleSubtreeExitCount(dragPreview.map(({ node: previewNode }) => previewNode), index) * TREE_SUBTREE_GAP}px`,
-                    ...dragPreviewLayout?.rows.get(node.id)?.rowStyle,
-                  } as CSSProperties}
-                >
-                  <span className="drag-preview-collapse-space" />
-                  <span className="drag-preview-bullet"><span className="drag-preview-dot" /></span>
-                  <span className="drag-preview-text" style={dragPreviewLayout?.rows.get(node.id)?.textStyle}>
-                    {node.kind === "date" ? node.dateKey : node.markdown || "未命名节点"}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <DragPreview
+              items={dragPreview}
+              layout={dragPreviewLayout}
+              canvasCardsByNodeId={canvasCardsByNodeId}
+              guides={dragPreviewGuides}
+            />
           ) : null}
         </DragOverlay>
       </DndContext>
@@ -873,6 +889,32 @@ function measureDragPreviewRows(): Map<string, DragPreviewPosition> {
   }));
 }
 
+function findTreeBlockElement(container: HTMLElement | null, key: string): HTMLElement | null {
+  return Array.from(container?.querySelectorAll<HTMLElement>("[data-tree-block-key]") ?? [])
+    .find((row) => row.dataset.treeBlockKey === key) ?? null;
+}
+
+interface DragPreviewGuidePosition {
+  x: number;
+  y1: number;
+  y2: number;
+}
+
+function measureDragPreviewGuides(
+  guides: readonly DragPreviewGuide[],
+  container: HTMLElement | null,
+): ReadonlyMap<string, DragPreviewGuidePosition> {
+  const preview = document.querySelector<HTMLElement>(".drag-preview");
+  const containerRect = container?.getBoundingClientRect();
+  if (!preview || !containerRect) return new Map();
+  const previewRect = preview.getBoundingClientRect();
+  return new Map(guides.map((guide) => [guide.id, {
+    x: previewRect.left - containerRect.left + guide.x,
+    y1: previewRect.top - containerRect.top + guide.y1,
+    y2: previewRect.top - containerRect.top + guide.y2,
+  }]));
+}
+
 function animateDroppedRows(previewPositions: ReadonlyMap<string, DragPreviewPosition>, container: HTMLElement | null): void {
   if (!container || previewPositions.size === 0) return;
   for (const row of Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-key]"))) {
@@ -896,6 +938,44 @@ function animateDroppedRows(previewPositions: ReadonlyMap<string, DragPreviewPos
       { duration: TREE_LAYOUT_ANIMATION_DURATION, easing: TREE_LAYOUT_ANIMATION_EASING },
     );
   }
+}
+
+function animateReleasedHierarchyGuides(
+  sourceKeys: ReadonlySet<string>,
+  previewPositions: ReadonlyMap<string, DragPreviewGuidePosition>,
+  guides: readonly { id: string; opacity?: number }[],
+  sourceOpacity: number,
+  container: HTMLElement | null,
+): void {
+  if (!container || sourceKeys.size === 0 || typeof HTMLElement === "undefined") return;
+  const targetOpacityById = new Map(guides.map((guide) => [guide.id, guide.opacity ?? 1]));
+  for (const group of Array.from(container.querySelectorAll<SVGGElement>(".hierarchy-line-group"))) {
+    const id = group.dataset.hierarchyNodeId;
+    if (!id || !sourceKeys.has(id)) continue;
+    const targetOpacity = targetOpacityById.get(id) ?? 1;
+    const fromOpacity = targetOpacity * Math.max(0, Math.min(1, sourceOpacity));
+    const target = readHierarchyGuidePosition(group);
+    const preview = previewPositions.get(id);
+    const translate = target && preview
+      ? `translate(${preview.x - target.x}px, ${preview.y1 - target.y1}px)`
+      : "translate(0px, 0px)";
+    if (fromOpacity >= targetOpacity && translate === "translate(0px, 0px)") continue;
+    if (typeof group.animate !== "function") continue;
+    group.animate(
+      [
+        { opacity: fromOpacity, transform: translate },
+        { opacity: targetOpacity, transform: "translate(0px, 0px)" },
+      ],
+      { duration: TREE_LAYOUT_ANIMATION_DURATION, easing: TREE_LAYOUT_ANIMATION_EASING },
+    );
+  }
+}
+
+function readHierarchyGuidePosition(group: SVGGElement): DragPreviewGuidePosition | null {
+  const path = group.querySelector<SVGPathElement>(".hierarchy-line")?.getAttribute("d") ?? "";
+  const match = path.match(/^M\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+V\s+(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  return { x: Number(match[1]), y1: Number(match[2]), y2: Number(match[3]) };
 }
 
 function EmptyState() {
