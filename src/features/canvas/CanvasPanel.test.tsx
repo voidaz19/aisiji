@@ -25,6 +25,10 @@ describe("CanvasPanel", () => {
       expect.stringContaining("第一张卡片"),
       expect.stringContaining("第二张卡片"),
     ]);
+    expect(container.querySelector(".supertag-chip")?.textContent).toContain("#卡片视图");
+    fireEvent.click(container.querySelector<HTMLButtonElement>(".supertag-chip")!);
+    expect(useNotebookStore.getState().nodes[rootId].supertagIds).not.toContain(CANVAS_SUPERTAG_ID);
+    store.addSupertag(rootId, CANVAS_SUPERTAG_ID);
     fireEvent.click(getByRole("button", { name: "新建节点" }));
     expect(Object.values(useNotebookStore.getState().nodes).filter((node) => node.parentId === rootId && !node.deletedAt)).toHaveLength(3);
   });
@@ -33,9 +37,9 @@ describe("CanvasPanel", () => {
     const store = useNotebookStore.getState();
     const rootId = store.createChild("root", "项目")!;
     store.addSupertag(rootId, CANVAS_SUPERTAG_ID);
-    const { getByRole } = render(<CanvasPanel root={useNotebookStore.getState().nodes[rootId]} />);
+    const { container } = render(<CanvasPanel root={useNotebookStore.getState().nodes[rootId]} />);
 
-    fireEvent.click(getByRole("button", { name: "移除 Canvas 标签" }));
+    fireEvent.click(container.querySelector<HTMLButtonElement>(".supertag-chip")!);
     expect(useNotebookStore.getState().nodes[rootId].supertagIds).not.toContain(CANVAS_SUPERTAG_ID);
   });
 });

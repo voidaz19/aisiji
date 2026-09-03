@@ -4,16 +4,21 @@ import type { Extension } from "@codemirror/state";
 import { nodeMarkdownExtensions } from "./markdownLanguage";
 import { markdownAtomicRanges, markdownLivePreview } from "./markdownDecorations";
 import { nodeLinkCompletionSource, nodeLinkCompletionTrigger } from "./nodeLinkCompletion";
-import { markdownEditorNodeId } from "./markdownEditorContext";
+import { markdownEditorNodeId, markdownEditorSupertagApply, type SupertagApply } from "./markdownEditorContext";
+import { supertagCompletionSource, supertagCompletionTrigger } from "./supertagCompletion";
 import {
   markdownSourceMode,
   markdownSourceModeShortcut,
   resetMarkdownSourceModeOnBlur,
 } from "./markdownPreviewState";
 
-export function createMarkdownEditorExtensions(nodeId: string | null = null): Extension[] {
+export function createMarkdownEditorExtensions(
+  nodeId: string | null = null,
+  options: { applySupertag?: SupertagApply } = {},
+): Extension[] {
   return [
     markdownEditorNodeId.of(nodeId),
+    markdownEditorSupertagApply.of(options.applySupertag ?? null),
     markdown({
       extensions: nodeMarkdownExtensions,
       addKeymap: false,
@@ -26,6 +31,7 @@ export function createMarkdownEditorExtensions(nodeId: string | null = null): Ex
     resetMarkdownSourceModeOnBlur,
     markdownSourceModeShortcut,
     nodeLinkCompletionTrigger,
-    autocompletion({ override: [nodeLinkCompletionSource], activateOnTyping: true }),
+    supertagCompletionTrigger,
+    autocompletion({ override: [nodeLinkCompletionSource, supertagCompletionSource], activateOnTyping: true }),
   ];
 }

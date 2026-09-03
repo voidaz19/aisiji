@@ -4,6 +4,8 @@ import { CompletionContext } from "@codemirror/autocomplete";
 import { describe, expect, it } from "vitest";
 import { createMarkdownEditorExtensions } from "./markdownEditor";
 import { nodeLinkCompletionSource } from "./nodeLinkCompletion";
+import { supertagCompletionSource } from "./supertagCompletion";
+import { markdownEditorSupertagApply } from "./markdownEditorContext";
 
 function nodeNames(markdown: string): string[] {
   const state = EditorState.create({
@@ -24,6 +26,35 @@ describe("node Markdown language", () => {
     expect(result?.options[0].label).toBeTruthy();
     expect(result?.from).toBe(2);
     expect(result?.options[0].apply).toMatch(/^node:[^\]]+\]\]$/);
+  });
+
+  it("offers the card-view supertag after a boundary # and consumes the trigger on apply", () => {
+    const applied: string[] = [];
+    const state = EditorState.create({
+      doc: "项目 #卡",
+      extensions: markdownEditorSupertagApply.of((_editor, id) => {
+        applied.push(id);
+        return true;
+      }),
+    });
+    const result = supertagCompletionSource(new CompletionContext(state, state.doc.length, false));
+
+    expect(result?.from).toBe(3);
+    expect(result?.options.map((option) => option.label)).toContain("#卡片视图");
+    const apply = result?.options[0]?.apply;
+    expect(typeof apply).toBe("function");
+    const dispatch = (transaction: unknown) => {
+      const changes = (transaction as { changes?: { from: number; to: number; insert: string } }).changes;
+      expect(changes).toEqual({ from: 3, to: 6, insert: "" });
+    };
+    if (typeof apply !== "function" || !result) throw new Error("expected supertag completion callback");
+    apply({ dispatch } as never, result.options[0], 3, 6);
+    expect(applied).toEqual(["canvas"]);
+  });
+
+  it.each(["# heading", "项目#卡片"]) ("does not open a supertag popup for %s", (markdown) => {
+    const state = EditorState.create({ doc: markdown });
+    expect(supertagCompletionSource(new CompletionContext(state, state.doc.length, false))).toBeNull();
   });
   it.each([
     ["**bold**", "StrongEmphasis"],

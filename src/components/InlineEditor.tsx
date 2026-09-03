@@ -26,6 +26,7 @@ import { toggleBold, toggleHighlight, toggleInlineCode, toggleItalic, toggleStri
 import { chooseAttachmentPaths, listenNativeFileDrop } from "../platform/nativeAttachments";
 import { hasTauriRuntime } from "../platform/runtime";
 import { writeClipboardText } from "../platform/clipboard";
+import { SupertagChips } from "./SupertagChip";
 
 interface Props {
   nodeId: string;
@@ -55,6 +56,8 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
   const mergeWithPrev = useNotebookStore((state) => state.mergeWithPrev);
   const mergeWithNext = useNotebookStore((state) => state.mergeWithNext);
   const remove = useNotebookStore((state) => state.remove);
+  const removeSupertag = useNotebookStore((state) => state.removeSupertag);
+  const supertagIds = useNotebookStore((state) => state.nodes[nodeId]?.supertagIds);
   const addAttachment = useNotebookStore((state) => state.addAttachment);
   const isActiveNode = useNotebookStore((state) => state.activeNodeId === nodeId);
   const activeNodeCursor = useNotebookStore((state) => state.activeNodeCursor);
@@ -169,7 +172,12 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
     const state = EditorState.create({
       doc: value,
       extensions: [
-        ...createMarkdownEditorExtensions(nodeId),
+        ...createMarkdownEditorExtensions(nodeId, {
+          applySupertag: (editor, supertagId) => runWithEditorNode(editorTarget, editor, (targetNodeId) => {
+            useNotebookStore.getState().addSupertag(targetNodeId, supertagId);
+            return true;
+          }),
+        }),
         pendingAttachmentUploadExtension,
         attachmentInsertionRequestExtension((paths, targetEditor) => {
           if (view.current === targetEditor) void insertPaths(paths, targetEditor);
@@ -397,6 +405,7 @@ export function InlineEditor({ nodeId, value, variant = "node" }: Props) {
       >
         {!shouldMountEditor && <div className="inline-editor-placeholder">{value || " "}</div>}
       </div>
+      <SupertagChips supertagIds={supertagIds} onRemove={(supertagId) => removeSupertag(nodeId, supertagId)} />
       {shouldMountEditor && (
         <EditorCommandMenu
           getEditor={() => view.current}

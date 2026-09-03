@@ -103,7 +103,12 @@ export function GhostEditor({ parentId }: Props) {
     const state = EditorState.create({
       doc: "",
       extensions: [
-        ...createMarkdownEditorExtensions(),
+        ...createMarkdownEditorExtensions(null, {
+          applySupertag: (editor, supertagId) => runWithEditorNode(target, editor, (nodeId) => {
+            useNotebookStore.getState().addSupertag(nodeId, supertagId);
+            return true;
+          }),
+        }),
         history(),
         EditorView.lineWrapping,
         keymap.of([

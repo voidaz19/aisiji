@@ -12,7 +12,7 @@ import {
   type DragMoveEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Grid2X2, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { flushSync } from "react-dom";
 import { TreeBlockRow } from "../../components/TreeRow";
 import { treeBlockAtPoint } from "../../components/treeHitTesting";
@@ -22,7 +22,6 @@ import { SelectionMenu, selectionMenuIcons, type SelectionMenuAnchor } from "../
 import { createTreeDropSlots, type TreeDropSlot, type VisibleDropPlaceholder, type VisibleTreeNode } from "../../domain/dropSlots";
 import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
-import { CANVAS_SUPERTAG_ID, hasSupertag } from "../../domain/supertags";
 import { dateLabel } from "../../shared/date";
 import { TREE_COLLAPSE_WIDTH, TREE_LEVEL_INDENT, TREE_ROW_LEFT_PADDING } from "../../shared/treeLayout";
 import { markAppPerformance } from "../../shared/performanceProbe";
@@ -80,7 +79,6 @@ export function NotebookPanel({
   markAppPerformance("notebook:render");
   const nodes = useNotebookStore((state) => state.nodes);
   const fields = useNotebookStore((state) => state.fields);
-  const addSupertag = useNotebookStore((state) => state.addSupertag);
   const collapsed = useNotebookStore((state) => state.collapsed);
   const ghostSuppressed = useNotebookStore((state) => state.ghostSuppressed);
   const activeNodeId = useNotebookStore((state) => state.activeNodeId);
@@ -637,9 +635,6 @@ export function NotebookPanel({
             <div className="search-input"><Search size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点内容" /></div>
           </div>
         )}
-        {activeRoot?.kind === "content" && view !== "search" && view !== "trash" && !hasSupertag({ nodes }, activeRoot.id, CANVAS_SUPERTAG_ID) && (
-          <button className="subtle-button" type="button" onClick={() => addSupertag(activeRoot.id, CANVAS_SUPERTAG_ID)}><Grid2X2 size={16} />添加 Canvas</button>
-        )}
       </section>
 
       {activeRoot && view !== "search" && view !== "trash" && activeFields.length > 0 && (
@@ -776,7 +771,7 @@ export function NotebookPanel({
                 <CanvasCardGrid
                   cards={row.localCanvasCards}
                   local
-                  label={`${row.node.markdown || "未命名节点"} 的局部 Canvas`}
+                  label={`${row.node.markdown || "未命名节点"} 的局部卡片视图`}
                 />
               ) : undefined}
             />;

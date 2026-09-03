@@ -328,7 +328,7 @@ describe("NotebookPanel local Canvas", () => {
     expect(container.querySelector(`[data-selection-key="${grandchildId}"]`)).toBeNull();
 
     fireEvent.click(canvasRow.querySelector<HTMLButtonElement>('button[aria-label="折叠节点"]')!);
-    expect(container.querySelector("[aria-label='局部画布 的局部 Canvas']")).toBeNull();
+    expect(container.querySelector("[aria-label='局部画布 的局部卡片视图']")).toBeNull();
 
     fireEvent.click(canvasRow.querySelector<HTMLButtonElement>('button[aria-label="展开节点"]')!);
     expect(container.querySelectorAll("[data-canvas-card-id]")).toHaveLength(2);

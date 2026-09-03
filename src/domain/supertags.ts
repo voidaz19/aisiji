@@ -12,7 +12,7 @@ export interface BuiltInSupertag {
 export const BUILT_IN_SUPERTAGS: readonly BuiltInSupertag[] = [
   {
     id: CANVAS_SUPERTAG_ID,
-    label: "Canvas",
+    label: "卡片视图",
     description: "以自动网格展示该节点的直接子节点。",
   },
 ];
