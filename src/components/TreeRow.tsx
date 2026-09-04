@@ -131,15 +131,13 @@ function TreeBlockFrame({
       {node ? (
         <button
           ref={sortable?.setActivatorNodeRef}
-          className={`node-bullet ${node.kind === "date" ? "date-bullet" : ""} ${isEmptyContent ? "empty-node-bullet" : ""} ${hasChildren && !isExpanded ? "has-collapsed-children" : ""}`}
+          className={`node-bullet ${isEmptyContent ? "empty-node-bullet" : ""} ${hasChildren && !isExpanded ? "has-collapsed-children" : ""}`}
           type="button"
           onClick={() => enterNode(node.id)}
           {...sortable?.listeners}
           aria-label="进入节点，按住拖拽"
         >
-          {node.kind === "date"
-            ? <Circle className="node-dot" size={9} fill="currentColor" />
-            : <Circle className="node-dot" size={6} fill="currentColor" strokeWidth={2.5} />}
+          <Circle className="node-dot" size={6} fill="currentColor" strokeWidth={2.5} />
         </button>
       ) : (
         <span className="node-bullet ghost-bullet">

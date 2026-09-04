@@ -235,6 +235,22 @@ describe("NotebookPanel draft structure commands", () => {
 });
 
 describe("NotebookPanel root heading", () => {
+  it("uses the ordinary bullet appearance for date nodes", () => {
+    const { container } = renderOutline();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-tree-block-kind='node']"));
+    const dateRow = rows
+      .find((row) => row.querySelector(".date-content"));
+    const contentRow = rows.find((row) => !row.querySelector(".date-content"));
+    const dateSvg = dateRow?.querySelector<SVGElement>(".node-dot");
+    const contentSvg = contentRow?.querySelector<SVGElement>(".node-dot");
+
+    expect(dateSvg).not.toBeNull();
+    expect(contentSvg).not.toBeNull();
+    expect(dateSvg?.getAttribute("width")).toBe(contentSvg?.getAttribute("width"));
+    expect(dateSvg?.getAttribute("height")).toBe(contentSvg?.getAttribute("height"));
+    expect(dateSvg?.getAttribute("stroke-width")).toBe(contentSvg?.getAttribute("stroke-width"));
+  });
+
   it("uses the same full-width heading contract for date and content roots", () => {
     const state = useNotebookStore.getState();
     const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
@@ -396,6 +412,39 @@ describe("NotebookPanel local Canvas", () => {
     expect(useNotebookStore.getState().collapsed[cardId]).toBe(true);
     expect(container.querySelector(".canvas-grid.is-local")).not.toBeNull();
   });
+
+  it("cancels scrollbar focus transfer without treating the press as a canvas click", () => {
+    const store = useNotebookStore.getState();
+    const date = Object.values(store.nodes).find((node) => node.kind === "date")!;
+    const canvasId = store.createChild(date.id, "局部画布")!;
+    const cardId = useNotebookStore.getState().createChild(canvasId, "滚动卡片")!;
+    useNotebookStore.getState().editMarkdown(cardId, "很长的卡片内容");
+    useNotebookStore.getState().addSupertag(canvasId, CANVAS_SUPERTAG_ID);
+
+    const { container } = render(<ReactivePageOutline rootId={date.id} />);
+    const shell = container.querySelector<HTMLElement>(".canvas-card .inline-editor-shell")!;
+    const area = container.querySelector<HTMLElement>(".content-area")!;
+    Object.defineProperties(shell, {
+      clientWidth: { value: 214, configurable: true },
+      clientHeight: { value: 132, configurable: true },
+      offsetWidth: { value: 224, configurable: true },
+      offsetHeight: { value: 132, configurable: true },
+      scrollWidth: { value: 214, configurable: true },
+      scrollHeight: { value: 264, configurable: true },
+    });
+    vi.spyOn(shell, "getBoundingClientRect").mockReturnValue(box(100, 120, 324, 252));
+
+    const dispatchResult = fireEvent.pointerDown(shell, {
+      button: 0,
+      pointerId: 1,
+      clientX: 318,
+      clientY: 180,
+    });
+
+    expect(dispatchResult).toBe(false);
+    expect(document.activeElement).not.toBe(area);
+    expect(useNotebookStore.getState().activeGhostParentId).toBeNull();
+  });
 });
 
 describe("NotebookPanel node range selection", () => {
@@ -519,6 +568,30 @@ describe("NotebookPanel node range selection", () => {
 
     expect(container.querySelector(".content-area")?.classList.contains("is-editable-canvas")).toBe(true);
     expect(useNotebookStore.getState().activeGhostParentId).toBe(ROOT_ID);
+  });
+
+  it("does not enter a date when its text is clicked, while its dot still enters", () => {
+    const state = useNotebookStore.getState();
+    const date = Object.values(state.nodes).find((node) => node.kind === "date")!;
+    const { container } = renderOutline();
+    const treeList = container.querySelector<HTMLElement>(".tree-list")!;
+    const dateRow = container.querySelector<HTMLElement>(`[data-selection-key="${date.id}"]`)!;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === treeList) return box(0, 0, 860, 240);
+      if (this === dateRow) return box(0, 10, 860, 34);
+      return box(0, 0, 0, 0);
+    });
+
+    fireEvent.pointerDown(dateRow.querySelector(".date-content")!, {
+      button: 0,
+      pointerId: 1,
+      clientX: 700,
+      clientY: 20,
+    });
+
+    expect(useNotebookStore.getState().activeRootId).toBe(ROOT_ID);
+    fireEvent.click(dateRow.querySelector(".node-bullet")!);
+    expect(useNotebookStore.getState().activeRootId).toBe(date.id);
   });
 
   it("resolves blank canvas focus before the current editor can blur", async () => {

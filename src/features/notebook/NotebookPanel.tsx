@@ -19,6 +19,7 @@ import { treeBlockAtPoint } from "../../components/treeHitTesting";
 import { treeBlockSubtreeKeys } from "../../components/treeBlock";
 import { InlineEditor } from "../../components/InlineEditor";
 import { SelectionMenu, selectionMenuIcons, type SelectionMenuAnchor } from "../../components/SelectionMenu";
+import { isScrollbarPointer } from "../../components/scrollbarHitTesting";
 import { createTreeDropSlots, type TreeDropSlot, type VisibleDropPlaceholder, type VisibleTreeNode } from "../../domain/dropSlots";
 import { canDropOnEmptyNode, type EmptyNodeTarget } from "../../domain/emptyDrop";
 import { ROOT_ID, type NodeRecord } from "../../domain/model";
@@ -87,7 +88,6 @@ export function NotebookPanel({
   const toggleChildren = useNotebookStore((state) => state.toggleChildren);
   const moveToSlot = useNotebookStore((state) => state.moveToSlot);
   const moveToEmptyNode = useNotebookStore((state) => state.moveToEmptyNode);
-  const enterNode = useNotebookStore((state) => state.enterNode);
   const focusNode = useNotebookStore((state) => state.focusNode);
   const focusGhost = useNotebookStore((state) => state.focusGhost);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -193,10 +193,10 @@ export function NotebookPanel({
     }
     if (block?.kind === "placeholder") {
       focusCanvasGhost(block.parentId);
-    } else if (block?.node.kind === "date") {
-      enterNode(block.node.id);
     } else if (block && rowElement) {
-      focusNode(block.node.id, canvasCursorAtPoint(rowElement, clientX, clientY));
+      if (block.node.kind !== "date") {
+        focusNode(block.node.id, canvasCursorAtPoint(rowElement, clientX, clientY));
+      }
     } else {
       // The page-level ghost is the continuous canvas landing point after the last row.
       focusCanvasGhost(rootId);
@@ -205,6 +205,12 @@ export function NotebookPanel({
 
   const onContentAreaPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.defaultPrevented) return;
+    if (isScrollbarPointer(event.target, event.currentTarget, event.clientX, event.clientY)) {
+      // Cancel the browser's focus transfer at pointerdown. The native
+      // scrollbar drag remains available, while the editor keeps its caret.
+      event.preventDefault();
+      return;
+    }
     if (view !== "today" && view !== "outline") return;
     if (event.button !== 0) return;
     if (draggingRef.current) return;

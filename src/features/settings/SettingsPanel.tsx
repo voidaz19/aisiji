@@ -114,8 +114,9 @@ export function SettingsPanel({
   };
 
   return (
-    <div className="settings-page">
-      <div className="content-header"><div><p className="eyebrow">工作区配置</p><h1>设置</h1></div></div>
+    <div className="settings-page-scroll">
+      <div className="settings-page">
+        <div className="content-header"><div><p className="eyebrow">工作区配置</p><h1>设置</h1></div></div>
       <section className="settings-section">
         <div className="section-title"><Cloud size={19} /><div><h2>坚果云同步</h2><p>凭据仅用于本机连接 WebDAV，数据库文件不会直接同步。</p></div></div>
         <label>WebDAV 地址<input value={credentials.endpoint} onChange={(event) => updateCredential("endpoint", event.target.value)} /></label>
@@ -159,6 +160,7 @@ export function SettingsPanel({
         </div>
         {maintenanceStatus && <p className="settings-status">{maintenanceStatus}</p>}
       </section>
+      </div>
     </div>
   );
 }

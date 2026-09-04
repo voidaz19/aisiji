@@ -4,6 +4,7 @@ import { treeBlockAtPoint } from "../../../components/treeHitTesting";
 import { executeIndentSelection, executeOutdentSelection } from "../../../domain/commands/moveNode";
 import { expandSelectionToSubtrees, keysInRange, type NodeRangeSelection, type VisibleSelectionEntry } from "../../../domain/nodeSelection";
 import { useNotebookStore } from "../../../store/useNotebookStore";
+import { isScrollbarPointer } from "../../../components/scrollbarHitTesting";
 import { writeClipboardText } from "../../../platform/clipboard";
 
 const GHOST_PREFIX = "ghost:";
@@ -83,6 +84,10 @@ export function useNodeRangeSelection(
 
   const onPointerDownCapture = useCallback((event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
+    if (isScrollbarPointer(event.target, containerRef.current, event.clientX, event.clientY)) {
+      event.preventDefault();
+      return;
+    }
     if (isSelectionMenuControl(event.target)) {
       drag.current = null;
       return;
